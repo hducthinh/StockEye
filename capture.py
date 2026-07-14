@@ -20,11 +20,22 @@ class BoardCapture:
                 pass
 
     def select_roi(self, force_reselect=False):
-        """Sử dụng vùng bàn cờ mặc định thay vì chọn tay"""
-        self.bbox = {'top': 192, 'left': 284, 'width': 743, 'height': 741}
-        self.sq_width = self.bbox["width"] / 8.0
-        self.sq_height = self.bbox["height"] / 8.0
-        print(f"Đã thiết lập vùng bàn cờ mặc định: {self.bbox}")
+        """Đọc vùng bàn cờ từ file config.json"""
+        import json, os
+        if os.path.exists("config.json"):
+            try:
+                with open("config.json", "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                    if "bbox" in config:
+                        self.bbox = config["bbox"]
+                        self.sq_width = self.bbox["width"] / 8.0
+                        self.sq_height = self.bbox["height"] / 8.0
+                        print(f"Đã tải vùng bàn cờ từ config.json: {self.bbox}")
+                        return
+            except:
+                pass
+                
+        raise ValueError("Chưa đo vùng bàn cờ! Vui lòng chạy `python auto_get_templates.py` trước khi chạy main.py!")
 
     def get_board_image(self):
         """Chụp và trả về ảnh vùng bàn cờ hiện tại"""

@@ -1,23 +1,88 @@
 import os
+import json
 import cv2
+import numpy as np
+import mss
+import time
 from capture import BoardCapture
+
+def measure_and_save_bbox():
+    print("=== BƯỚC 1: CHỌN VÙNG BÀN CỜ ===")
+    print("Vui lòng kéo thả chuột để chọn VÙNG BÀN CỜ.")
+    print(" - Nhấn ENTER hoặc SPACE để chốt tọa độ.")
+    print(" - Nhấn phím C để hủy bỏ.")
+    
+    print("\nBạn có 2 giây để chuyển sang trình duyệt chứa bàn cờ...")
+    time.sleep(2)
+    print("Đang chụp màn hình...")
+    
+    with mss.mss() as sct:
+        monitor = sct.monitors[1] # Màn hình chính
+        img = np.array(sct.grab(monitor))
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        
+        window_name = "Select Board (Nhan ENTER de chot)"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        
+        roi = cv2.selectROI(window_name, img_bgr, showCrosshair=True, fromCenter=False)
+        cv2.destroyAllWindows()
+        
+        if roi[2] > 0 and roi[3] > 0:
+            bbox = {
+                'top': int(roi[1] + monitor['top']), 
+                'left': int(roi[0] + monitor['left']), 
+                'width': int(roi[2]), 
+                'height': int(roi[3])
+            }
+            print(f"\n[Thành công] Đã lấy tọa độ bàn cờ: {bbox}")
+            
+            # Lưu vào config.json
+            config = {}
+            if os.path.exists("config.json"):
+                try:
+                    with open("config.json", "r", encoding="utf-8") as f:
+                        config = json.load(f)
+                except:
+                    pass
+            
+            config["bbox"] = bbox
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=4)
+                
+            print("Đã tự động lưu tọa độ vào config.json!")
+            return True
+        else:
+            print("\n[!] Bạn đã hủy đo tọa độ.")
+            return False
 
 def main():
     print("=========================================")
-    print("    AUTO-GET TEMPLATES SCRIPT")
+    print("    AUTO SETUP SCRIPT (ĐO BÀN CỜ & LẤY ẢNH MẪU)")
     print("=========================================")
     print("Vui lòng đảm bảo:")
     print("1. Trình duyệt đang mở Chess.com (hoặc trang cờ của bạn).")
     print("2. Bàn cờ đang ở vị trí XUẤT PHÁT (chưa có nước đi nào).")
     print("3. Góc nhìn của bạn có thể là Trắng hoặc Đen (Tool sẽ tự nhận diện).")
     print("=========================================")
-    input("Nhấn Enter để tiến hành chụp và trích xuất ảnh mẫu...")
+    input("Nhấn Enter để bắt đầu...")
+
+    # Bước 1: Đo và lưu tọa độ bàn cờ
+    if not measure_and_save_bbox():
+        return
+        
+    print("\n=== BƯỚC 2: TRÍCH XUẤT ẢNH MẪU TỰ ĐỘNG ===")
 
     if not os.path.exists("templates"):
         os.makedirs("templates")
 
     cap = BoardCapture()
-    cap.select_roi()
+    try:
+        cap.select_roi()
+    except Exception as e:
+        print(f"[!] Lỗi: {e}")
+        return
+        
     img = cap.get_board_image()
     
     # Tự động nhận diện màu quân cờ hiện tại
@@ -72,10 +137,7 @@ def main():
         count += 1
 
     print(f"\n[Thành công] Đã trích xuất {count} ảnh mẫu vào thư mục 'templates/'!")
-    print("Bạn có thể kiểm tra các file ảnh trong thư mục này.")
-    print("Vì chúng ta trích xuất toàn bộ 32 quân cờ, hệ thống đã học được hầu hết")
-    print("tất cả các trường hợp (quân cờ nằm trên nền tối / nền sáng).")
-    print("Bây giờ bạn có thể quay lại main.py và nhấn F3 giữa ván để test Mắt Thần!")
+    print("Bây giờ bạn có thể mở lại Terminal và chạy: python main.py")
 
 if __name__ == "__main__":
     main()

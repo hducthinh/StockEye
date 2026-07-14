@@ -42,17 +42,12 @@ pip install -r requirements.txt
 Tải [Stockfish Engine](https://stockfishchess.org/download/) bản nhị phân (.exe) và đặt vào thư mục `engine/` (VD: `engine/stockfish-windows-x86-64-avx2.exe`).
 
 ### 3. Huấn luyện hệ thống:
-Trước khi chơi, bạn cần cho Tool biết vị trí bàn cờ và hình dạng quân cờ của bạn (do mỗi web/giao diện có kích thước khác nhau):
+Trước khi chơi, bạn cần cho Tool biết vị trí bàn cờ và hình dạng quân cờ của bạn (do mỗi web/giao diện có kích thước khác nhau). Bạn chỉ cần làm việc này 1 lần duy nhất:
 
-**BƯỚC A: Đo tọa độ bàn cờ**
-1. Mở bàn cờ trên trình duyệt.
-2. Chạy lệnh: `python tool_measure_board.py`
-3. Kéo chuột quanh bàn cờ để lấy Bounding Box, nhấn `Space` hoặc `Enter`. Sau đó Copy tọa độ in ra trên Terminal vào file `capture.py` (hàm `select_roi()`).
-
-**BƯỚC B: Quét ảnh mẫu (Chỉ làm 1 lần)**
-1. Mở một bàn cờ **THẾ XUẤT PHÁT** (Mới tinh, 32 quân nằm đúng vị trí chuẩn).
+1. Mở một bàn cờ **THẾ XUẤT PHÁT** (Mới tinh, 32 quân nằm đúng vị trí chuẩn) trên trình duyệt.
 2. Chạy lệnh: `python auto_get_templates.py`
-3. Tool sẽ tự động quét và lưu 32 bức ảnh mẫu hoàn hảo vào thư mục `templates/`.
+3. Tool sẽ hiển thị cửa sổ ảnh để bạn **kéo chuột vẽ vùng bàn cờ**. Nhấn `Enter` hoặc `Space` để chốt tọa độ.
+4. Tọa độ bàn cờ sẽ được tự động lưu vào `config.json`, đồng thời Tool sẽ tự động trích xuất luôn 32 bức ảnh mẫu hoàn hảo vào thư mục `templates/`.
 
 ### 4. Chạy ứng dụng:
 ```bash
