@@ -10,33 +10,51 @@
 ---
 
 ## 🌟 Tính năng nổi bật (Features)
-- **Computer Vision Pipeline:** Nhận diện bàn cờ cực nhanh bằng `cv2.absdiff` (phát hiện chuyển động) và `cv2.matchTemplate` (nhận diện quân cờ).
-- **Auto FEN Generation:** Tự động sinh chuỗi FEN chuẩn xác, bao gồm cả các luật phức tạp (Nhập thành, Phong cấp, Bắt tốt qua đường).
-- **Invisible Overlay UI:** Lớp giao diện hiển thị bằng PyQt được thiết kế trong suốt (Transparent) và xuyên chuột (Click-through), không gây cản trở thao tác chơi game của người dùng.
+- **Vòng lặp tự động (Auto-Tracker):** Tự động phát hiện chuyển động của quân cờ thông qua `cv2.absdiff` mà không cần tốn tài nguyên nhận diện toàn bộ bàn cờ liên tục. Chạy ngầm mượt mà và tự động đẩy nước đi cho Stockfish.
+- **Mắt Thần (Mid-game Sync):** Trang bị tính năng "Hồi sinh" (Hotkeys: `1`, `2`) bằng cách quét và phân tích chính xác vị trí của 32 quân cờ, tự động sinh chuỗi FEN chuẩn xác để sửa lỗi bàn cờ khi Auto-Tracker bị lỡ nhịp.
+- **Auto Perspective:** Nhận diện bàn cờ được xoay cho góc nhìn phe Trắng hay phe Đen dựa trên mật độ pixel tự động, giúp vẽ UI một cách chính xác tuyệt đối.
+- **Invisible Overlay UI:** Lớp giao diện hiển thị bằng PyQt được thiết kế trong suốt (Transparent), chống chụp màn hình (WDA_EXCLUDEFROMCAPTURE) và xuyên chuột (Click-through), không gây cản trở thao tác chơi game của người dùng.
 - **Asynchronous Architecture:** Sử dụng mô hình Đa luồng (Multi-threading) tách biệt UI, Camera Capture và Stockfish Engine để chống giật lag máy tính.
+
+---
+
+## ⌨️ Phím tắt (Hotkeys)
+Khi ứng dụng đang chạy (`main.py`), bạn có thể điều khiển trực tiếp trên bàn phím:
+- `F2`: Bắt đầu ván mới (Xóa sạch lịch sử, chờ quân di chuyển để nhận diện phe).
+- `1`: Bật Mắt Thần - Quét toàn bộ ảnh màn hình hiện tại, tìm nước đi tốt nhất cho **Trắng**.
+- `2`: Bật Mắt Thần - Quét toàn bộ ảnh màn hình hiện tại, tìm nước đi tốt nhất cho **Đen**.
 
 ---
 
 ## 🛠️ Cài đặt & Sử dụng (Installation & Usage)
 
-### Yêu cầu hệ thống:
+### 1. Yêu cầu hệ thống:
 - Hệ điều hành: Windows 10/11.
 - Màn hình độ phân giải 1920x1080 (khuyến nghị).
 - Python 3.9 trở lên.
 
-### Cài đặt:
-1. Clone repository này về máy:
-   ```bash
-   git clone https://github.com/hducthinh/StockEye.git
-   cd StockEye
-   ```
-2. Cài đặt các thư viện cần thiết:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Tải [Stockfish Engine](https://stockfishchess.org/download/) bản nhị phân (.exe) và đặt vào thư mục `engine/`.
+### 2. Cài đặt môi trường:
+```bash
+git clone https://github.com/hducthinh/StockEye.git
+cd StockEye
+pip install -r requirements.txt
+```
+Tải [Stockfish Engine](https://stockfishchess.org/download/) bản nhị phân (.exe) và đặt vào thư mục `engine/` (VD: `engine/stockfish-windows-x86-64-avx2.exe`).
 
-### Chạy ứng dụng:
+### 3. Huấn luyện hệ thống:
+Trước khi chơi, bạn cần cho Tool biết vị trí bàn cờ và hình dạng quân cờ của bạn (do mỗi web/giao diện có kích thước khác nhau):
+
+**BƯỚC A: Đo tọa độ bàn cờ**
+1. Mở bàn cờ trên trình duyệt.
+2. Chạy lệnh: `python tool_measure_board.py`
+3. Kéo chuột quanh bàn cờ để lấy Bounding Box, nhấn `Space` hoặc `Enter`. Sau đó Copy tọa độ in ra trên Terminal vào file `capture.py` (hàm `select_roi()`).
+
+**BƯỚC B: Quét ảnh mẫu (Chỉ làm 1 lần)**
+1. Mở một bàn cờ **THẾ XUẤT PHÁT** (Mới tinh, 32 quân nằm đúng vị trí chuẩn).
+2. Chạy lệnh: `python auto_get_templates.py`
+3. Tool sẽ tự động quét và lưu 32 bức ảnh mẫu hoàn hảo vào thư mục `templates/`.
+
+### 4. Chạy ứng dụng:
 ```bash
 python main.py
 ```
