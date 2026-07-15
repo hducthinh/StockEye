@@ -42,7 +42,7 @@ class ChessEngine:
         engine_options = {"Threads": self.config["threads"]}
         if self.config.get("uci_limit_strength"):
             engine_options["UCI_LimitStrength"] = True
-            engine_options["UCI_Elo"] = self.config["uci_elo"]
+            engine_options["UCI_Elo"] = max(1320, self.config["uci_elo"])
         else:
             engine_options["UCI_LimitStrength"] = False
             

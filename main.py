@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QCheckBox, QSpinBox, QDoubleSpinBox, QFormLayout, QLabel
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer, Qt
 
 from capture import BoardCapture
@@ -152,9 +152,9 @@ class ChessWorker(QThread):
                 self.manual_move_request = None
                 
                 # Phát âm báo hiệu
-                import winsound
-                freq = 1000 if self.capture.player_color == "white" else 800
-                winsound.Beep(freq, 200)
+                # import winsound
+                # freq = 1000 if self.capture.player_color == "white" else 800
+                # winsound.Beep(freq, 200)
                 print(f"\n[System] ĐÃ RESET VÁN MỚI! TỰ ĐỘNG NHẬN DIỆN BẠN CẦM QUÂN: {self.capture.player_color.upper()}")
                 
                 # Cập nhật lại màn hình tĩnh
@@ -217,9 +217,9 @@ class ChessWorker(QThread):
                         pre_move_img = curr_img
                         last_failed_squares = None
                         
-                        # Phát âm báo hiệu
-                        import winsound
-                        winsound.Beep(1200, 300)
+                        # Phát âm báo hiệu (đã bị tắt)
+                        # import winsound
+                        # winsound.Beep(1200, 300)
                         
                         # Buộc cập nhật UI NGAY LẬP TỨC
                         self.process_and_emit_top_moves()
@@ -242,8 +242,8 @@ class ChessWorker(QThread):
                     if current_mtime > config_mtime:
                         config_mtime = current_mtime
                         self.engine.reload_config()
-                        import winsound
-                        winsound.Beep(1500, 100)
+                        # import winsound
+                        # winsound.Beep(1500, 100)
                 except:
                     pass
                     
@@ -395,9 +395,53 @@ class ControlPanelUI(QWidget):
         self.worker = worker
         self.setWindowTitle("StockEye Control")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.resize(200, 150)
+        self.resize(250, 300)
         
         layout = QVBoxLayout()
+        
+        # Form config
+        form_layout = QFormLayout()
+        
+        import json
+        self.config_path = "config.json"
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                self.config_data = json.load(f)
+        except:
+            self.config_data = {}
+
+        # Limit Strength (Checkbox)
+        self.chk_limit_strength = QCheckBox()
+        self.chk_limit_strength.setChecked(self.config_data.get("uci_limit_strength", False))
+        form_layout.addRow("Limit Strength:", self.chk_limit_strength)
+        
+        # ELO (SpinBox)
+        self.spin_elo = QSpinBox()
+        self.spin_elo.setRange(1320, 4000)
+        self.spin_elo.setValue(self.config_data.get("uci_elo", 2000))
+        form_layout.addRow("UCI Elo:", self.spin_elo)
+        
+        # Human Error Rate (DoubleSpinBox)
+        self.spin_error = QDoubleSpinBox()
+        self.spin_error.setRange(0.0, 1.0)
+        self.spin_error.setSingleStep(0.1)
+        self.spin_error.setValue(self.config_data.get("human_error_rate", 0.2))
+        form_layout.addRow("Error Rate:", self.spin_error)
+        
+        # Time Limit (DoubleSpinBox)
+        self.spin_time = QDoubleSpinBox()
+        self.spin_time.setRange(0.01, 10.0)
+        self.spin_time.setSingleStep(0.05)
+        self.spin_time.setValue(self.config_data.get("time_limit", 0.1))
+        form_layout.addRow("Time Limit (s):", self.spin_time)
+        
+        layout.addLayout(form_layout)
+        
+        # Nút Lưu Settings
+        self.btn_save = QPushButton("LƯU SETTINGS")
+        self.btn_save.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 10px;")
+        self.btn_save.clicked.connect(self.save_config)
+        layout.addWidget(self.btn_save)
         
         # Nút Bật/Tắt
         self.btn_toggle = QPushButton("BẬT / TẮT: ĐANG CHẠY")
@@ -418,6 +462,18 @@ class ControlPanelUI(QWidget):
         layout.addWidget(self.btn_black)
         
         self.setLayout(layout)
+
+    def save_config(self):
+        import json
+        self.config_data["uci_limit_strength"] = self.chk_limit_strength.isChecked()
+        self.config_data["uci_elo"] = self.spin_elo.value()
+        self.config_data["human_error_rate"] = self.spin_error.value()
+        self.config_data["time_limit"] = round(self.spin_time.value(), 2)
+        try:
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(self.config_data, f, indent=4)
+        except Exception as e:
+            print(f"Lỗi khi lưu config: {e}")
 
     def toggle_tool(self):
         self.worker.is_paused = not self.worker.is_paused
