@@ -5,8 +5,8 @@ import cv2
 import numpy as np
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QThread, pyqtSignal, QTimer
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton
+from PyQt5.QtCore import QThread, pyqtSignal, QTimer, Qt
 
 from capture import BoardCapture
 from engine_logic import ChessEngine
@@ -26,6 +26,7 @@ class ChessWorker(QThread):
         self.reset_request = None
         self.manual_move_request = None
         self.midgame_sync_request = False
+        self.is_paused = False
         
         self.analysis_queue = queue.Queue()
         
@@ -120,6 +121,10 @@ class ChessWorker(QThread):
         threading.Thread(target=analysis_worker, daemon=True).start()
         
         while self.running:
+            if self.is_paused:
+                time.sleep(0.1)
+                continue
+                
             if self.reset_request:
                 self.reset_request = False
                 
@@ -361,7 +366,7 @@ class ChessWorker(QThread):
                 
     def process_and_emit_top_moves(self):
         """Hỏi Stockfish và đẩy kết quả lên UI"""
-        top_moves = self.engine.get_top_moves(limit=3)
+        top_moves = self.engine.get_top_moves(limit=1)
         
         if not top_moves:
             return
@@ -383,6 +388,46 @@ class ChessWorker(QThread):
                 
         # Phát tín hiệu an toàn qua thread ranh giới (cross-thread)
         self.moves_ready.emit(ui_data)
+
+class ControlPanelUI(QWidget):
+    def __init__(self, worker):
+        super().__init__()
+        self.worker = worker
+        self.setWindowTitle("StockEye Control")
+        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.resize(200, 150)
+        
+        layout = QVBoxLayout()
+        
+        # Nút Bật/Tắt
+        self.btn_toggle = QPushButton("BẬT / TẮT: ĐANG CHẠY")
+        self.btn_toggle.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
+        self.btn_toggle.clicked.connect(self.toggle_tool)
+        layout.addWidget(self.btn_toggle)
+        
+        # Nút Trắng Đi
+        self.btn_white = QPushButton("TRẮNG ĐI (Chữa cháy)")
+        self.btn_white.setStyleSheet("background-color: white; color: black; font-weight: bold; padding: 10px;")
+        self.btn_white.clicked.connect(lambda: self.worker.request_midgame_sync("w"))
+        layout.addWidget(self.btn_white)
+        
+        # Nút Đen Đi
+        self.btn_black = QPushButton("ĐEN ĐI (Chữa cháy)")
+        self.btn_black.setStyleSheet("background-color: #333333; color: white; font-weight: bold; padding: 10px;")
+        self.btn_black.clicked.connect(lambda: self.worker.request_midgame_sync("b"))
+        layout.addWidget(self.btn_black)
+        
+        self.setLayout(layout)
+
+    def toggle_tool(self):
+        self.worker.is_paused = not self.worker.is_paused
+        if self.worker.is_paused:
+            self.btn_toggle.setText("BẬT / TẮT: ĐÃ DỪNG")
+            self.btn_toggle.setStyleSheet("background-color: #f44336; color: white; font-weight: bold; padding: 10px;")
+            self.worker.moves_ready.emit([]) # Xóa mũi tên cũ trên màn hình
+        else:
+            self.btn_toggle.setText("BẬT / TẮT: ĐANG CHẠY")
+            self.btn_toggle.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
 
 if __name__ == "__main__":
     # Cứu tinh cho Ctrl+C: Ép PyQt5 nhường quyền quản lý ngắt hệ thống (SIGINT) lại cho Python
@@ -419,6 +464,10 @@ if __name__ == "__main__":
     worker = ChessWorker(capture, engine)
     worker.moves_ready.connect(overlay.update_moves) # Nối Signal của Worker vào hàm vẽ của UI
     worker.start()
+    
+    # [Thêm đoạn này] Khởi tạo Bảng điều khiển
+    control_panel = ControlPanelUI(worker)
+    control_panel.show()
     
     # 5. Chạy Event Loop của PyQt (Giữ cửa sổ UI sống)
     exit_code = app.exec_()

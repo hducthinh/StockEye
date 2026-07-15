@@ -223,7 +223,7 @@ class BoardCapture:
                             best_match_piece = fen_map[piece_type]
                             
                 # Ngưỡng chấp nhận (có thể cần tinh chỉnh tuỳ ảnh mẫu của người dùng)
-                if best_match_val > 0.70:
+                if best_match_val > 0.55:
                     if board_orientation == "black":
                         actual_row = 7 - row
                         actual_col = 7 - col

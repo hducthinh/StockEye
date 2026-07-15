@@ -104,7 +104,7 @@ class ChessEngine:
                 net_changed.add(chess.square_name(sq))
         return net_changed
 
-    def _find_best_sequence(self, changed_squares, max_depth=3):
+    def _find_best_sequence(self, changed_squares, max_depth=2):
         best_seq = []
         best_score = -9999
         changed_list = list(changed_squares)
@@ -226,9 +226,17 @@ class ChessEngine:
                 # CẢNH BÁO: Hàm analyse() của Stockfish luôn chạy ở 100% sức mạnh và bỏ qua UCI_Elo!
                 # Để Stockfish thực sự chơi ngu đi theo đúng Elo, BẮT BUỘC phải dùng hàm play().
                 # Hàm play() chỉ trả về 1 nước đi duy nhất (chính là nước mà Stockfish chọn ở Elo đó).
-                result = self.engine.play(self.board, chess.engine.Limit(time=self.config["time_limit"]))
+                result = self.engine.play(self.board, chess.engine.Limit(time=self.config["time_limit"]), info=chess.engine.INFO_ALL)
                 if result.move:
-                    return [{"move": result.move.uci(), "score": "Elo " + str(self.config["uci_elo"])}]
+                    score_str = "Elo " + str(self.config["uci_elo"])
+                    if result.info and "score" in result.info:
+                        score_obj = result.info["score"].white()
+                        if score_obj.is_mate():
+                            score_str = f"M{score_obj.mate()}"
+                        else:
+                            val = score_obj.score() / 100.0
+                            score_str = f"+{val:.2f}" if val > 0 else f"{val:.2f}"
+                    return [{"move": result.move.uci(), "score": score_str}]
                 return []
             else:
                 # Nếu không giới hạn sức mạnh (Max), dùng analyse() để lấy Top 3 nước đi mạnh nhất
@@ -248,7 +256,8 @@ class ChessEngine:
                     if score_obj.is_mate():
                         score = f"M{score_obj.mate()}"
                     else:
-                        score = round(score_obj.score() / 100.0, 2)
+                        val = score_obj.score() / 100.0
+                        score = f"+{val:.2f}" if val > 0 else f"{val:.2f}"
                         
                     top_moves.append({
                         "move": best_move.uci(),

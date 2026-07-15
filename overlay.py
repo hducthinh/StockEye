@@ -82,7 +82,7 @@ class OverlayUI(QWidget):
             self._draw_arrow_head(painter, p1, p2, color)
             
             # 3. Vẽ văn bản điểm số (Score)
-            painter.setPen(QPen(QColor(255, 255, 255), 2)) # Chữ trắng
+            painter.setPen(QPen(QColor(255, 0, 0), 2)) # Chữ đỏ
             # Đặt text lệch ra một chút để không đè lên mũi tên
             painter.drawText(p2.x() + 15, p2.y() + 15, str(score))
 

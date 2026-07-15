@@ -127,9 +127,9 @@ def main():
         
         square_img = img[y1:y2, x1:x2]
         
-        # Cắt bớt 5% lề ở mỗi cạnh để loại bỏ viền của ô vuông nếu có
-        pad_x = int((x2 - x1) * 0.05)
-        pad_y = int((y2 - y1) * 0.05)
+        # Cắt bớt 15% lề ở mỗi cạnh để loại bỏ viền của ô vuông nếu có
+        pad_x = int((x2 - x1) * 0.15)
+        pad_y = int((y2 - y1) * 0.15)
         cropped_img = square_img[pad_y:-pad_y, pad_x:-pad_x]
         
         filename = f"templates/{piece_name}_{row}_{col}.png"
