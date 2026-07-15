@@ -366,7 +366,7 @@ class ChessWorker(QThread):
                 
     def process_and_emit_top_moves(self):
         """Hỏi Stockfish và đẩy kết quả lên UI"""
-        top_moves = self.engine.get_top_moves(limit=1)
+        top_moves = self.engine.get_top_moves(limit=2)
         
         if not top_moves:
             return

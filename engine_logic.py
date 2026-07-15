@@ -221,13 +221,28 @@ class ChessEngine:
         if not self.engine:
             return []
             
+        import random
+        human_error_rate = self.config.get("human_error_rate", 0.0)
+        is_human_error = random.random() < human_error_rate
+        
+        # Lấy dư ra 1 nước nếu có kích hoạt Human Error
+        search_limit = limit + 1 if is_human_error else limit
+            
         try:
             if self.config.get("uci_limit_strength"):
-                # CẢNH BÁO: Hàm analyse() của Stockfish luôn chạy ở 100% sức mạnh và bỏ qua UCI_Elo!
-                # Để Stockfish thực sự chơi ngu đi theo đúng Elo, BẮT BUỘC phải dùng hàm play().
-                # Hàm play() chỉ trả về 1 nước đi duy nhất (chính là nước mà Stockfish chọn ở Elo đó).
-                result = self.engine.play(self.board, chess.engine.Limit(time=self.config["time_limit"]), info=chess.engine.INFO_ALL)
-                if result.move:
+                top_moves = []
+                banned_moves = set()
+                
+                # Vòng lặp liên tục gọi hàm play() để lấy ra N nước đi theo chuẩn Elo
+                for _ in range(search_limit):
+                    legal_moves = [m for m in self.board.legal_moves if m not in banned_moves]
+                    if not legal_moves:
+                        break
+                        
+                    result = self.engine.play(self.board, chess.engine.Limit(time=self.config["time_limit"]), root_moves=legal_moves, info=chess.engine.INFO_ALL)
+                    if not result.move:
+                        break
+                        
                     score_str = "Elo " + str(self.config["uci_elo"])
                     if result.info and "score" in result.info:
                         score_obj = result.info["score"].white()
@@ -236,34 +251,51 @@ class ChessEngine:
                         else:
                             val = score_obj.score() / 100.0
                             score_str = f"+{val:.2f}" if val > 0 else f"{val:.2f}"
-                    return [{"move": result.move.uci(), "score": score_str}]
-                return []
+                            
+                    top_moves.append({"move": result.move.uci(), "score": score_str})
+                    banned_moves.add(result.move)
+                
+                # Bỏ qua nước Best nếu giả lập lỗi con người
+                if is_human_error and len(top_moves) > 0:
+                    top_moves.pop(0)
+                    print("[Engine] 🎭 Kích hoạt Human Error: Đang hiển thị nước Inaccuracy thay thế (Elo Mode)!")
+                    
+                return top_moves[:limit]
             else:
-                # Nếu không giới hạn sức mạnh (Max), dùng analyse() để lấy Top 3 nước đi mạnh nhất
+                # Nếu không giới hạn sức mạnh (Max), dùng analyse() để lấy Top nước đi mạnh nhất
                 info = self.engine.analyse(
                     self.board, 
                     chess.engine.Limit(time=self.config["time_limit"]), # Giới hạn thời gian suy nghĩ
-                    multipv=limit # Lấy top 3
+                    multipv=search_limit
                 )
             
-            top_moves = []
-            for entry in info:
-                if "pv" in entry:
-                    best_move = entry["pv"][0] # pv là list các nước đi tiếp theo (Principal Variation)
-                    score_obj = entry["score"].white()
-                    
-                    # Quy đổi điểm số
-                    if score_obj.is_mate():
-                        score = f"M{score_obj.mate()}"
-                    else:
-                        val = score_obj.score() / 100.0
-                        score = f"+{val:.2f}" if val > 0 else f"{val:.2f}"
+                top_moves = []
+                for i, entry in enumerate(info):
+                    if is_human_error and i == 0:
+                        continue # Bỏ qua nước Best hoàn toàn
                         
-                    top_moves.append({
-                        "move": best_move.uci(),
-                        "score": score
-                    })
-            return top_moves
+                    if "pv" in entry:
+                        best_move = entry["pv"][0].uci() # pv là list các nước đi tiếp theo (Principal Variation)
+                        score_obj = entry["score"].white()
+                        
+                        # Quy đổi điểm số
+                        if score_obj.is_mate():
+                            score = f"M{score_obj.mate()}"
+                        else:
+                            val = score_obj.score() / 100.0
+                            score = f"+{val:.2f}" if val > 0 else f"{val:.2f}"
+                            
+                        top_moves.append({
+                            "move": best_move,
+                            "score": score
+                        })
+                        
+                    if len(top_moves) >= limit:
+                        break
+                        
+                if is_human_error:
+                    print("[Engine] 🎭 Kích hoạt Human Error: Đang hiển thị nước Inaccuracy thay thế!")
+                return top_moves
             
         except Exception as e:
             print(f"[Engine] Lỗi phân tích: {e}")
