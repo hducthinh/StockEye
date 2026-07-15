@@ -17,13 +17,13 @@ class ChessWorker(QThread):
     # Signal truyền List các nước đi đã chuyển đổi sang tọa độ Pixel lên UI
     # Định dạng: [((sx, sy), (ex, ey), score), ...]
     moves_ready = pyqtSignal(list)
+    toggle_pause_signal = pyqtSignal()
 
     def __init__(self, capture, engine):
         super().__init__()
         self.capture = capture
         self.engine = engine
         self.running = True
-        self.reset_request = None
         self.manual_move_request = None
         self.midgame_sync_request = False
         self.is_paused = False
@@ -32,12 +32,9 @@ class ChessWorker(QThread):
         
         # Đăng ký phím tắt toàn cục (Global Hotkeys)
         import keyboard
-        keyboard.on_press_key("f2", lambda _: self.request_reset())
+        keyboard.on_press_key("`", lambda _: self.toggle_pause_signal.emit())
         keyboard.on_press_key("1", lambda _: self.request_midgame_sync(turn="w"))
         keyboard.on_press_key("2", lambda _: self.request_midgame_sync(turn="b"))
-
-    def request_reset(self):
-        self.reset_request = True
 
     def request_midgame_sync(self, turn):
         self.midgame_sync_request = turn
@@ -70,7 +67,7 @@ class ChessWorker(QThread):
         print("\n[Worker] Bắt đầu theo dõi bàn cờ...")
         print("="*40)
         print("🔥 [HOTKEY CỜ CHỚP] 🔥")
-        print(" - Nhấn phím F2: Bắt đầu ván MỚI (Phe sẽ được lấy từ file config.json)")
+        print(" - Nhấn phím ` (Dấu ngã): Bật / Tắt tạm dừng để vẽ chiến thuật")
         print(" - Nhấn phím 1: Quét ảnh & Gợi ý nước cờ cho TRẮNG")
         print(" - Nhấn phím 2: Quét ảnh & Gợi ý nước cờ cho ĐEN")
         print(" - Cấu hình sức mạnh/thời gian tự động cập nhật khi bạn lưu file config.json")
@@ -123,50 +120,6 @@ class ChessWorker(QThread):
         while self.running:
             if self.is_paused:
                 time.sleep(0.1)
-                continue
-                
-            if self.reset_request:
-                self.reset_request = False
-                
-                # Chụp ảnh bàn cờ hiện tại
-                curr_img = self.capture.get_board_image()
-                
-                # Tự động nhận diện màu quân
-                detected_color = self.capture.auto_detect_color(curr_img)
-                self.capture.player_color = detected_color
-                
-                # Cập nhật màu vào config để đồng bộ
-                try:
-                    import json
-                    with open("config.json", "r", encoding="utf-8") as f:
-                        cfg = json.load(f)
-                    cfg["player_color"] = detected_color
-                    with open("config.json", "w", encoding="utf-8") as f:
-                        json.dump(cfg, f, indent=4)
-                except:
-                    pass
-                    
-                self.engine.reset_board()
-                self.engine.white_moves = []
-                self.engine.black_moves = []
-                self.manual_move_request = None
-                
-                # Phát âm báo hiệu
-                # import winsound
-                # freq = 1000 if self.capture.player_color == "white" else 800
-                # winsound.Beep(freq, 200)
-                print(f"\n[System] ĐÃ RESET VÁN MỚI! TỰ ĐỘNG NHẬN DIỆN BẠN CẦM QUÂN: {self.capture.player_color.upper()}")
-                
-                # Cập nhật lại màn hình tĩnh
-                last_stable_img = curr_img
-                pre_move_img = curr_img
-                last_failed_squares = None
-                
-                # [SỬA LỖI] Bắt buộc phải cập nhật prev_img, nếu không OpenCV sẽ 
-                # trừ ảnh ván mới cho ảnh ván cũ và gây ra rác toàn bàn cờ!
-                prev_img = curr_img
-                
-                self.analysis_queue.put(True)
                 continue
                 
             if self.midgame_sync_request:
@@ -373,16 +326,23 @@ class ChessWorker(QThread):
             
         ui_data = []
         for item in top_moves:
-            m = item["move"] # 'e2e4'
+            m = item["move"] # 'e2e4' hoặc ['e2e4', 'e7e5', 'g1f3']
             score = item["score"]
             
-            start_sq = m[:2]
-            end_sq = m[2:4]
-            
             try:
-                start_px = self.square_to_pixel(start_sq)
-                end_px = self.square_to_pixel(end_sq)
-                ui_data.append((start_px, end_px, score))
+                if isinstance(m, list):
+                    for move_str in m:
+                        start_sq = move_str[:2]
+                        end_sq = move_str[2:4]
+                        start_px = self.square_to_pixel(start_sq)
+                        end_px = self.square_to_pixel(end_sq)
+                        ui_data.append((start_px, end_px, score))
+                else:
+                    start_sq = m[:2]
+                    end_sq = m[2:4]
+                    start_px = self.square_to_pixel(start_sq)
+                    end_px = self.square_to_pixel(end_sq)
+                    ui_data.append((start_px, end_px, score))
             except Exception as e:
                 print(f"[Worker] Lỗi convert tọa độ: {e}")
                 
@@ -485,6 +445,12 @@ class ControlPanelUI(QWidget):
             self.btn_toggle.setText("BẬT / TẮT: ĐANG CHẠY")
             self.btn_toggle.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
 
+    def closeEvent(self, event):
+        """Bắt sự kiện đóng cửa sổ (nhấn X) để tắt toàn bộ chương trình"""
+        print("\n[UI] Bảng điều khiển đã bị đóng. Đang thoát chương trình...")
+        QApplication.instance().quit()
+        event.accept()
+
 if __name__ == "__main__":
     # Cứu tinh cho Ctrl+C: Ép PyQt5 nhường quyền quản lý ngắt hệ thống (SIGINT) lại cho Python
     signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -524,6 +490,9 @@ if __name__ == "__main__":
     # [Thêm đoạn này] Khởi tạo Bảng điều khiển
     control_panel = ControlPanelUI(worker)
     control_panel.show()
+    
+    # Kết nối phím tắt ` tới nút Bật/Tắt UI
+    worker.toggle_pause_signal.connect(control_panel.toggle_tool)
     
     # 5. Chạy Event Loop của PyQt (Giữ cửa sổ UI sống)
     exit_code = app.exec_()

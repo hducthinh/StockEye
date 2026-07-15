@@ -35,7 +35,7 @@ class BoardCapture:
             except:
                 pass
                 
-        raise ValueError("Chưa đo vùng bàn cờ! Vui lòng chạy `python auto_get_templates.py` trước khi chạy main.py!")
+        raise ValueError("Chưa đo vùng bàn cờ! Vui lòng chạy `python measure_board.py` trước khi chạy main.py!")
 
     def get_board_image(self):
         """Chụp và trả về ảnh vùng bàn cờ hiện tại"""
