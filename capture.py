@@ -3,11 +3,16 @@ import numpy as np
 import mss
 import json
 import os
+import pytesseract
+import re
+
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 class BoardCapture:
     def __init__(self):
         self.sct = mss.mss()
         self.bbox = None
+        self.clock_region = None
         self.sq_width = 0
         self.sq_height = 0
         
@@ -31,6 +36,10 @@ class BoardCapture:
                         self.sq_width = self.bbox["width"] / 8.0
                         self.sq_height = self.bbox["height"] / 8.0
                         print(f"Đã tải vùng bàn cờ từ config.json: {self.bbox}")
+                    if "clock_region" in config:
+                        self.clock_region = config["clock_region"]
+                        print(f"Đã tải vùng đồng hồ từ config.json: {self.clock_region}")
+                    if self.bbox:
                         return
             except:
                 pass
@@ -44,6 +53,37 @@ class BoardCapture:
             
         img = np.array(self.sct.grab(self.bbox))
         return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        
+    def get_remaining_time(self):
+        """Chụp và đọc thời gian từ vùng đồng hồ bằng OCR"""
+        if not self.clock_region:
+            return None
+            
+        try:
+            img = np.array(self.sct.grab(self.clock_region))
+            gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+            # Thresholding to make text clear
+            _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+            
+            # OCR specifically for digits and time separators
+            text = pytesseract.image_to_string(thresh, config='--psm 7 -c tessedit_char_whitelist=0123456789:.,')
+            text = text.strip().replace(',', '.')
+            
+            # Parse mm:ss or ss.s
+            if ':' in text:
+                parts = text.split(':')
+                if len(parts) >= 2:
+                    m = int(re.sub(r'[^0-9]', '', parts[0]) or 0)
+                    s = float(re.sub(r'[^0-9.]', '', parts[1]) or 0)
+                    return float(m * 60 + s)
+            else:
+                val = float(re.sub(r'[^0-9.]', '', text))
+                return val
+        except Exception:
+            # Nếu nhòe hoặc lỗi format, return None để clock_worker giữ lại giá trị cũ
+            return None
+            
+        return None
 
     def pixel_to_square(self, x, y):
         col = int(x / self.sq_width)

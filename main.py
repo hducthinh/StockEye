@@ -18,6 +18,7 @@ class ChessWorker(QThread):
     # Định dạng: [((sx, sy), (ex, ey), score), ...]
     moves_ready = pyqtSignal(list)
     toggle_pause_signal = pyqtSignal()
+    autoplay_ui_signal = pyqtSignal(bool)
 
     def __init__(self, capture, engine):
         super().__init__()
@@ -26,17 +27,48 @@ class ChessWorker(QThread):
         self.running = True
         self.manual_move_request = None
         self.midgame_sync_request = False
-        self.is_paused = False
+        self.is_paused = True
         
         self.analysis_queue = queue.Queue()
+        self.click_queue = queue.Queue()
+        self.current_time_left = 60.0
         
+        import json, os
+        if os.path.exists("config.json"):
+            try:
+                with open("config.json", "r", encoding="utf-8") as f:
+                    self.config_data = json.load(f)
+            except:
+                self.config_data = {}
+        else:
+            self.config_data = {}
+            
+        # Ép mặc định khi khởi động là tắt Autoplay
+        self.config_data["autoplay"] = False
+        try:
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(self.config_data, f, indent=4)
+        except:
+            pass
+
+        def kill_switch(_):
+            print("[Kill Switch] Hủy bỏ Autoplay và xóa hàng đợi click!")
+            self.is_paused = True
+            with self.click_queue.mutex:
+                self.click_queue.queue.clear()
+            self.toggle_pause_signal.emit()
+
         # Đăng ký phím tắt toàn cục (Global Hotkeys)
         import keyboard
-        keyboard.on_press_key("`", lambda _: self.toggle_pause_signal.emit())
-        keyboard.on_press_key("1", lambda _: self.request_midgame_sync(turn="w"))
-        keyboard.on_press_key("2", lambda _: self.request_midgame_sync(turn="b"))
+        keyboard.on_press_key("1", lambda _: self.toggle_pause_signal.emit())
+        keyboard.on_press_key("esc", kill_switch)
+        keyboard.on_press_key("2", lambda _: self.request_midgame_sync(turn="auto_suggest"))
+        keyboard.on_press_key("3", lambda _: self.request_midgame_sync(turn="auto"))
 
     def request_midgame_sync(self, turn):
+        if self.is_paused:
+            print("\n[!] Lệnh bị từ chối: Vui lòng BẬT (phím 1) tool trước khi sử dụng phím 2 hoặc 3!")
+            return
         self.midgame_sync_request = turn
 
     def square_to_pixel(self, sq):
@@ -67,9 +99,10 @@ class ChessWorker(QThread):
         print("\n[Worker] Bắt đầu theo dõi bàn cờ...")
         print("="*40)
         print("🔥 [HOTKEY CỜ CHỚP] 🔥")
-        print(" - Nhấn phím ` (Dấu ngã): Bật / Tắt tạm dừng để vẽ chiến thuật")
-        print(" - Nhấn phím 1: Quét ảnh & Gợi ý nước cờ cho TRẮNG")
-        print(" - Nhấn phím 2: Quét ảnh & Gợi ý nước cờ cho ĐEN")
+        print(" - Nhấn phím 1: Bật / Tắt tạm dừng để vẽ chiến thuật")
+        print(" - Nhấn phím 2: Tự động nhận diện Phe & Gợi ý nước cờ")
+        print(" - Nhấn phím 3: Tự động nhận diện Phe & Bật Autoplay ngay lập tức")
+        print(" - Nhấn phím ESC: Kill Switch (Tắt và xóa lệnh chuột ngay lập tức)")
         print(" - Cấu hình sức mạnh/thời gian tự động cập nhật khi bạn lưu file config.json")
         print(" - Nhấn Ctrl+C ở Terminal để thoát")
         print("\n💡 MẸO: Nếu bị lỡ nước đi, bạn có thể GÕ TRỰC TIẾP nước đi (vd: e2e4) vào Terminal này rồi nhấn Enter để đồng bộ lại!")
@@ -81,8 +114,8 @@ class ChessWorker(QThread):
         stable_counter = 0
         last_failed_squares = None
         
-        # Khi bắt đầu (thế cờ chuẩn), lấy nước đi gợi ý mở màn luôn
-        self.analysis_queue.put(True)
+        # Không lấy nước đi mở màn tự động nữa vì mặc định tool đang Tạm dừng
+        # self.analysis_queue.put(True)
 
         import os
         import threading
@@ -117,22 +150,160 @@ class ChessWorker(QThread):
 
         threading.Thread(target=analysis_worker, daemon=True).start()
         
-        while self.running:
-            if self.is_paused:
-                time.sleep(0.1)
-                continue
+        # Thread OCR Đồng hồ độc lập (Clock Worker)
+        def clock_worker():
+            while self.running:
+                try:
+                    time_left = self.capture.get_remaining_time()
+                    if time_left is not None:
+                        self.current_time_left = time_left
+                    time.sleep(0.1) # Quét đồng hồ mỗi 100ms
+                except Exception:
+                    time.sleep(0.5)
+        threading.Thread(target=clock_worker, daemon=True).start()
+        
+        # Thread điều khiển chuột (Click Worker)
+        def click_worker():
+            import ctypes
+            import random
+            import math
+            import time
+            import chess
+            
+            def move_and_click(px_x, px_y, delay, travel_time):
+                # Random offset 15-20%
+                offset_limit = self.capture.sq_width * 0.15
+                rx = px_x + random.uniform(-offset_limit, offset_limit)
+                ry = px_y + random.uniform(-offset_limit, offset_limit)
                 
+                time.sleep(travel_time)
+                ctypes.windll.user32.SetCursorPos(int(rx), int(ry))
+                
+                # Click (Down, sleep 20-50ms, Up)
+                ctypes.windll.user32.mouse_event(2, 0, 0, 0, 0) # LEFTDOWN
+                time.sleep(random.uniform(0.02, 0.05))
+                ctypes.windll.user32.mouse_event(4, 0, 0, 0, 0) # LEFTUP
+                
+            while self.running:
+                try:
+                    task = self.click_queue.get(timeout=0.1)
+                    start_sq = task["start_sq"]
+                    end_sq = task["end_sq"]
+                    start_px = task["start_px"]
+                    end_px = task["end_px"]
+                    decision_fen = task["decision_fen"]
+                    is_scramble = task["is_scramble"]
+                    ctx = task["context"]
+                    
+                    # Double check FEN
+                    if self.engine.board.fen() != decision_fen:
+                        print("[ClickWorker] FEN mismatch (Opponent moved?). Hủy click.")
+                        continue
+                        
+                    bot_delay = self.config_data.get("bot_delay", 0.15)
+                    
+                    # Fitts Law approximation for travel time (luôn áp dụng)
+                    dist = math.hypot(end_px[0] - start_px[0], end_px[1] - start_px[1])
+                    dist_squares = dist / self.capture.sq_width
+                    travel_time = 0.05 + (dist_squares * 0.015)
+                    
+                    action_log = "Normal"
+                    
+                    # Quy tắc Tối thượng: Time Scramble (Hard-Override)
+                    if is_scramble:
+                        reaction_time = max(0.01, random.gauss(0.05, 0.02)) + bot_delay * 0.2
+                        travel_time = 0.02
+                        action_log = "Scramble"
+                    else:
+                        # 4 Lớp Màng Lọc Ngữ Cảnh
+                        # Bước 4: Hesitation (Trượt chuột)
+                        if random.random() < 0.03:
+                            reaction_time = random.uniform(1.5, 3.0)
+                            action_log = "Hesitation"
+                        # Bước 2: Forced/Evasion
+                        elif ctx["opponent_captured"]:
+                            reaction_time = random.uniform(0.1, 0.2)
+                            action_log = "Recapture"
+                        elif ctx["is_in_check"]:
+                            if ctx["legal_moves_count"] <= 3:
+                                reaction_time = random.uniform(0.1, 0.3)
+                                action_log = "Instinct Evasion"
+                            else:
+                                reaction_time = random.uniform(0.5, 1.5)
+                                action_log = "Calculated Evasion"
+                        # Bước 3: Premove (15% ở Khai cuộc hoặc Tàn cuộc)
+                        elif (ctx["fullmove_number"] <= 5 or ctx["fullmove_number"] > 35) and random.random() < 0.15:
+                            reaction_time = random.uniform(0.01, 0.05)
+                            action_log = "Premove"
+                        # Bước 1: Game Phases (Bình thường)
+                        else:
+                            if ctx["fullmove_number"] <= 5:
+                                reaction_time = max(0.01, random.gauss(bot_delay * 0.8, 0.05))
+                            else:
+                                reaction_time = max(0.01, random.gauss(bot_delay, 0.05))
+                                # Tactical pause chance ở Trung/Tàn cuộc
+                                if 6 <= ctx["fullmove_number"] <= 35 and random.random() < 0.15:
+                                    reaction_time += random.uniform(0.5, 1.5)
+                                    action_log = "Tactical Pause"
+
+                    print(f"[ClickWorker] {action_log}! Executing {start_sq}{end_sq} (Reaction: {reaction_time:.2f}s, Travel: {travel_time:.2f}s, Scramble: {is_scramble})")
+                    
+                    time.sleep(reaction_time)
+                    # Double check again just in case the long reaction time allowed opponent to move
+                    if self.engine.board.fen() != decision_fen:
+                        print("[ClickWorker] FEN mismatch sau reaction time. Hủy click.")
+                        continue
+
+                    # Execute clicks
+                    move_and_click(start_px[0], start_px[1], 0, 0)
+                    move_and_click(end_px[0], end_px[1], 0, travel_time)
+                    
+                    # Reset chuột về 1 góc để tránh hover tooltip che bàn cờ
+                    time.sleep(0.05)
+                    ctypes.windll.user32.SetCursorPos(10, 10)
+                    
+                except queue.Empty:
+                    pass
+                except Exception as e:
+                    print(f"[ClickWorker Error] {e}")
+
+        threading.Thread(target=click_worker, daemon=True).start()
+        
+        while self.running:
             if self.midgame_sync_request:
                 turn_to_move = self.midgame_sync_request
                 self.midgame_sync_request = False
                 
-                print(f"\n[System] ĐANG QUÉT ẢNH VÀ TÌM NƯỚC CHO {'TRẮNG' if turn_to_move == 'w' else 'ĐEN'}...")
                 curr_img = self.capture.get_board_image()
                 
                 # Tự động nhận diện màu quân cờ hiện tại
                 try:
                     detected_color = self.capture.auto_detect_color(curr_img)
                     self.capture.player_color = detected_color
+                    
+                    if turn_to_move in ["auto", "auto_suggest"]:
+                        turn_to_move_resolved = 'w' if detected_color == 'white' else 'b'
+                        
+                        if turn_to_move == "auto":
+                            # Bật Autoplay
+                            self.is_paused = False
+                            self.config_data["autoplay"] = True
+                            self.autoplay_ui_signal.emit(True)
+                            
+                            import json
+                            with open("config.json", "r", encoding="utf-8") as f:
+                                cfg = json.load(f)
+                            cfg["autoplay"] = True
+                            with open("config.json", "w", encoding="utf-8") as f:
+                                json.dump(cfg, f, indent=4)
+                                
+                            print(f"\n[System] ĐÃ BẬT AUTOPLAY! TỰ NHẬN DIỆN BẠN CẦM QUÂN: {'TRẮNG' if detected_color == 'white' else 'ĐEN'}")
+                        else:
+                            print(f"\n[System] TỰ NHẬN DIỆN BẠN CẦM QUÂN: {'TRẮNG' if detected_color == 'white' else 'ĐEN'} (Chỉ gợi ý)")
+                            
+                        turn_to_move = turn_to_move_resolved
+                    
+                    print(f"\n[System] ĐANG QUÉT ẢNH VÀ TÌM NƯỚC CHO {'TRẮNG' if turn_to_move == 'w' else 'ĐEN'}...")
                     
                     import json
                     with open("config.json", "r", encoding="utf-8") as f:
@@ -185,6 +356,10 @@ class ChessWorker(QThread):
                 
                 continue
                 
+            if self.is_paused:
+                time.sleep(0.1)
+                continue
+                
             time.sleep(0.016) # ~60 fps
             
             # Kiểm tra config.json thay đổi mỗi giây
@@ -195,8 +370,9 @@ class ChessWorker(QThread):
                     if current_mtime > config_mtime:
                         config_mtime = current_mtime
                         self.engine.reload_config()
-                        # import winsound
-                        # winsound.Beep(1500, 100)
+                        import json
+                        with open("config.json", "r", encoding="utf-8") as f:
+                            self.config_data = json.load(f)
                 except:
                     pass
                     
@@ -325,9 +501,13 @@ class ChessWorker(QThread):
             return
             
         ui_data = []
+        best_m = None
         for item in top_moves:
             m = item["move"] # 'e2e4' hoặc ['e2e4', 'e7e5', 'g1f3']
             score = item["score"]
+            
+            if best_m is None:
+                best_m = m[0] if isinstance(m, list) else m
             
             try:
                 if isinstance(m, list):
@@ -348,6 +528,60 @@ class ChessWorker(QThread):
                 
         # Phát tín hiệu an toàn qua thread ranh giới (cross-thread)
         self.moves_ready.emit(ui_data)
+        
+        # Xử lý Autoplay
+        import chess
+        if self.config_data.get('autoplay', False) and not self.is_paused and best_m:
+            is_our_turn = False
+            if self.engine.board.turn == chess.WHITE and self.capture.player_color == "white":
+                is_our_turn = True
+            elif self.engine.board.turn == chess.BLACK and self.capture.player_color == "black":
+                is_our_turn = True
+                
+            if is_our_turn:
+                start_sq = best_m[:2]
+                end_sq = best_m[2:4]
+                start_px = self.square_to_pixel(start_sq)
+                end_px = self.square_to_pixel(end_sq)
+                
+                is_scramble = self.current_time_left < 15.0
+                
+                with self.click_queue.mutex:
+                    self.click_queue.queue.clear()
+                    
+                context = {
+                    "fullmove_number": self.engine.board.fullmove_number,
+                    "is_in_check": self.engine.board.is_check(),
+                    "opponent_captured": False,
+                    "legal_moves_count": len(list(self.engine.board.legal_moves))
+                }
+                
+                # Check if opponent's last move was a capture
+                if len(self.engine.board.move_stack) > 0:
+                    try:
+                        # board.peek() raises IndexError if move_stack is empty
+                        last_move = self.engine.board.peek()
+                        # To check if it was a capture, we can check if a piece was on the destination square before the move
+                        # But python-chess has board.is_capture() which evaluates the move in the CURRENT board state.
+                        # Wait, the current board state ALREADY HAS the move applied. So is_capture(last_move) might not work 
+                        # if it's evaluated on the current state.
+                        # Actually, we just pop it, check, and push it back.
+                        self.engine.board.pop()
+                        context["opponent_captured"] = self.engine.board.is_capture(last_move)
+                        self.engine.board.push(last_move)
+                    except:
+                        pass
+                
+                click_task = {
+                    "start_sq": start_sq,
+                    "end_sq": end_sq,
+                    "start_px": start_px,
+                    "end_px": end_px,
+                    "decision_fen": self.engine.board.fen(),
+                    "is_scramble": is_scramble,
+                    "context": context
+                }
+                self.click_queue.put(click_task)
 
 class ControlPanelUI(QWidget):
     def __init__(self, worker):
@@ -370,9 +604,16 @@ class ControlPanelUI(QWidget):
         except:
             self.config_data = {}
 
-        # Limit Strength (Checkbox)
+        # Autoplay (BOT Mode)
+        self.chk_autoplay = QCheckBox()
+        self.chk_autoplay.setChecked(self.config_data.get("autoplay", False))
+        self.worker.autoplay_ui_signal.connect(self.chk_autoplay.setChecked)
+        form_layout.addRow("Autoplay (BOT):", self.chk_autoplay)
+        
+        # Limit Strength (Checkbox) - Ép mặc định luôn BẬT
+        self.config_data["uci_limit_strength"] = True
         self.chk_limit_strength = QCheckBox()
-        self.chk_limit_strength.setChecked(self.config_data.get("uci_limit_strength", False))
+        self.chk_limit_strength.setChecked(True)
         form_layout.addRow("Limit Strength:", self.chk_limit_strength)
         
         # ELO (SpinBox)
@@ -395,7 +636,17 @@ class ControlPanelUI(QWidget):
         self.spin_time.setValue(self.config_data.get("time_limit", 0.1))
         form_layout.addRow("Time Limit (s):", self.spin_time)
         
+        # BOT Delay (DoubleSpinBox)
+        self.spin_bot_delay = QDoubleSpinBox()
+        self.spin_bot_delay.setRange(0.0, 2.0)
+        self.spin_bot_delay.setSingleStep(0.1)
+        self.spin_bot_delay.setValue(self.config_data.get("bot_delay", 0.15))
+        form_layout.addRow("BOT Delay (s):", self.spin_bot_delay)
+        
         layout.addLayout(form_layout)
+        
+        # Kết nối tín hiệu Limit Strength để bật/tắt các ô bên dưới
+        self.chk_limit_strength.stateChanged.connect(self.toggle_strength_inputs)
         
         # Nút Lưu Settings
         self.btn_save = QPushButton("LƯU SETTINGS")
@@ -404,31 +655,48 @@ class ControlPanelUI(QWidget):
         layout.addWidget(self.btn_save)
         
         # Nút Bật/Tắt
-        self.btn_toggle = QPushButton("BẬT / TẮT: ĐANG CHẠY")
-        self.btn_toggle.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
+        self.btn_toggle = QPushButton()
+        if self.worker.is_paused:
+            self.btn_toggle.setText("[1] BẬT / TẮT: ĐÃ DỪNG")
+            self.btn_toggle.setStyleSheet("background-color: #f44336; color: white; font-weight: bold; padding: 10px;")
+        else:
+            self.btn_toggle.setText("[1] BẬT / TẮT: ĐANG CHẠY")
+            self.btn_toggle.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
+            
         self.btn_toggle.clicked.connect(self.toggle_tool)
         layout.addWidget(self.btn_toggle)
         
-        # Nút Trắng Đi
-        self.btn_white = QPushButton("TRẮNG ĐI (Chữa cháy)")
-        self.btn_white.setStyleSheet("background-color: white; color: black; font-weight: bold; padding: 10px;")
-        self.btn_white.clicked.connect(lambda: self.worker.request_midgame_sync("w"))
-        layout.addWidget(self.btn_white)
+        # Nút Gợi Ý
+        self.btn_suggest = QPushButton("[2] GỢI Ý (Tự nhận diện phe)")
+        self.btn_suggest.setStyleSheet("background-color: white; color: black; font-weight: bold; padding: 10px;")
+        self.btn_suggest.clicked.connect(lambda: self.worker.request_midgame_sync("auto_suggest"))
+        layout.addWidget(self.btn_suggest)
         
-        # Nút Đen Đi
-        self.btn_black = QPushButton("ĐEN ĐI (Chữa cháy)")
-        self.btn_black.setStyleSheet("background-color: #333333; color: white; font-weight: bold; padding: 10px;")
-        self.btn_black.clicked.connect(lambda: self.worker.request_midgame_sync("b"))
-        layout.addWidget(self.btn_black)
+        # Nút Autoplay (Tự nhận diện)
+        self.btn_auto = QPushButton("[3] AUTOPLAY (Tự nhận diện phe)")
+        self.btn_auto.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold; padding: 10px;")
+        self.btn_auto.clicked.connect(lambda: self.worker.request_midgame_sync("auto"))
+        layout.addWidget(self.btn_auto)
         
         self.setLayout(layout)
+        
+        # Cập nhật UI ban đầu
+        self.toggle_strength_inputs()
+
+    def toggle_strength_inputs(self):
+        is_checked = self.chk_limit_strength.isChecked()
+        self.spin_elo.setEnabled(is_checked)
+        self.spin_error.setEnabled(is_checked)
+        self.spin_time.setEnabled(is_checked)
 
     def save_config(self):
         import json
+        self.config_data["autoplay"] = self.chk_autoplay.isChecked()
         self.config_data["uci_limit_strength"] = self.chk_limit_strength.isChecked()
         self.config_data["uci_elo"] = self.spin_elo.value()
         self.config_data["human_error_rate"] = self.spin_error.value()
         self.config_data["time_limit"] = round(self.spin_time.value(), 2)
+        self.config_data["bot_delay"] = round(self.spin_bot_delay.value(), 2)
         try:
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config_data, f, indent=4)
@@ -438,11 +706,13 @@ class ControlPanelUI(QWidget):
     def toggle_tool(self):
         self.worker.is_paused = not self.worker.is_paused
         if self.worker.is_paused:
-            self.btn_toggle.setText("BẬT / TẮT: ĐÃ DỪNG")
+            self.btn_toggle.setText("[1] BẬT / TẮT: ĐÃ DỪNG")
             self.btn_toggle.setStyleSheet("background-color: #f44336; color: white; font-weight: bold; padding: 10px;")
             self.worker.moves_ready.emit([]) # Xóa mũi tên cũ trên màn hình
+            with self.worker.click_queue.mutex:
+                self.worker.click_queue.queue.clear()
         else:
-            self.btn_toggle.setText("BẬT / TẮT: ĐANG CHẠY")
+            self.btn_toggle.setText("[1] BẬT / TẮT: ĐANG CHẠY")
             self.btn_toggle.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
 
     def closeEvent(self, event):
@@ -455,6 +725,12 @@ if __name__ == "__main__":
     # Cứu tinh cho Ctrl+C: Ép PyQt5 nhường quyền quản lý ngắt hệ thống (SIGINT) lại cho Python
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     
+    import ctypes
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception as e:
+        print(f"Không thể thiết lập DPI Aware: {e}")
+        
     app = QApplication(sys.argv)
     
     # Đảm bảo Ctrl+C hoạt động ngay cả khi vòng lặp PyQt đang chạy
