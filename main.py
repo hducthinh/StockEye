@@ -196,7 +196,9 @@ class ChessWorker(QThread):
                     ctx = task["context"]
                     
                     # Double check FEN
-                    if self.engine.board.fen() != decision_fen:
+                    with self.engine.lock:
+                        current_fen = self.engine.board.fen()
+                    if current_fen != decision_fen:
                         print("[ClickWorker] FEN mismatch (Opponent moved?). Hủy click.")
                         continue
                         
@@ -250,7 +252,9 @@ class ChessWorker(QThread):
                     
                     time.sleep(reaction_time)
                     # Double check again just in case the long reaction time allowed opponent to move
-                    if self.engine.board.fen() != decision_fen:
+                    with self.engine.lock:
+                        current_fen = self.engine.board.fen()
+                    if current_fen != decision_fen:
                         print("[ClickWorker] FEN mismatch sau reaction time. Hủy click.")
                         continue
 
@@ -326,9 +330,11 @@ class ChessWorker(QThread):
                 if detected_fen:
                     try:
                         # 2. Xóa lịch sử cũ, ép Stockfish nhận thế cờ mới
-                        self.engine.board.set_fen(detected_fen)
+                        with self.engine.lock:
+                            self.engine.board.set_fen(detected_fen)
+                            is_valid = self.engine.board.is_valid()
                         
-                        if not self.engine.board.is_valid():
+                        if not is_valid:
                             print(f"\n[!] Bàn cờ không hợp lệ (Có thể do lỗi ảnh hoặc sai lượt). Vui lòng quét lại!\n")
                             continue
                             
@@ -408,12 +414,16 @@ class ChessWorker(QThread):
                     try:
                         import chess
                         move = chess.Move.from_uci(cmd_str)
-                        if move in self.engine.board.legal_moves:
-                            if self.engine.board.turn == chess.WHITE:
+                        with self.engine.lock:
+                            is_legal = move in self.engine.board.legal_moves
+                            board_turn = self.engine.board.turn
+                        if is_legal:
+                            if board_turn == chess.WHITE:
                                 self.engine.white_moves.append(move)
                             else:
                                 self.engine.black_moves.append(move)
-                            self.engine.board.push(move)
+                            with self.engine.lock:
+                                self.engine.board.push(move)
                             print(f"\n[System] Đã nạp tay nước đi: {cmd_str}")
                             
                             curr_img = self.capture.get_board_image()
@@ -487,9 +497,11 @@ class ChessWorker(QThread):
                                 if changed_squares_stable != last_failed_squares:
                                     print(f"[Worker] Đã lọc rác/hoạt ảnh lơ lửng sau nước đi: {changed_squares_stable}")
                                     last_failed_squares = changed_squares_stable
+                                    last_stable_img = curr_img
                         elif changed_squares_stable != last_failed_squares:
                             print(f"[Worker] Đã lọc rác/hoạt ảnh lơ lửng: {changed_squares_stable}")
                             last_failed_squares = changed_squares_stable
+                            last_stable_img = curr_img
                             
             prev_img = curr_img
                 
@@ -533,9 +545,11 @@ class ChessWorker(QThread):
         import chess
         if self.config_data.get('autoplay', False) and not self.is_paused and best_m:
             is_our_turn = False
-            if self.engine.board.turn == chess.WHITE and self.capture.player_color == "white":
+            with self.engine.lock:
+                board_turn = self.engine.board.turn
+            if board_turn == chess.WHITE and self.capture.player_color == "white":
                 is_our_turn = True
-            elif self.engine.board.turn == chess.BLACK and self.capture.player_color == "black":
+            elif board_turn == chess.BLACK and self.capture.player_color == "black":
                 is_our_turn = True
                 
             if is_our_turn:
@@ -549,35 +563,31 @@ class ChessWorker(QThread):
                 with self.click_queue.mutex:
                     self.click_queue.queue.clear()
                     
-                context = {
-                    "fullmove_number": self.engine.board.fullmove_number,
-                    "is_in_check": self.engine.board.is_check(),
-                    "opponent_captured": False,
-                    "legal_moves_count": len(list(self.engine.board.legal_moves))
-                }
-                
-                # Check if opponent's last move was a capture
-                if len(self.engine.board.move_stack) > 0:
-                    try:
-                        # board.peek() raises IndexError if move_stack is empty
-                        last_move = self.engine.board.peek()
-                        # To check if it was a capture, we can check if a piece was on the destination square before the move
-                        # But python-chess has board.is_capture() which evaluates the move in the CURRENT board state.
-                        # Wait, the current board state ALREADY HAS the move applied. So is_capture(last_move) might not work 
-                        # if it's evaluated on the current state.
-                        # Actually, we just pop it, check, and push it back.
-                        self.engine.board.pop()
-                        context["opponent_captured"] = self.engine.board.is_capture(last_move)
-                        self.engine.board.push(last_move)
-                    except:
-                        pass
+                with self.engine.lock:
+                    context = {
+                        "fullmove_number": self.engine.board.fullmove_number,
+                        "is_in_check": self.engine.board.is_check(),
+                        "opponent_captured": False,
+                        "legal_moves_count": len(list(self.engine.board.legal_moves))
+                    }
+                    
+                    # Check if opponent's last move was a capture
+                    if len(self.engine.board.move_stack) > 0:
+                        try:
+                            last_move = self.engine.board.peek()
+                            self.engine.board.pop()
+                            context["opponent_captured"] = self.engine.board.is_capture(last_move)
+                            self.engine.board.push(last_move)
+                        except:
+                            pass
+                    decision_fen = self.engine.board.fen()
                 
                 click_task = {
                     "start_sq": start_sq,
                     "end_sq": end_sq,
                     "start_px": start_px,
                     "end_px": end_px,
-                    "decision_fen": self.engine.board.fen(),
+                    "decision_fen": decision_fen,
                     "is_scramble": is_scramble,
                     "context": context
                 }
@@ -607,7 +617,7 @@ class ControlPanelUI(QWidget):
         # Autoplay (BOT Mode)
         self.chk_autoplay = QCheckBox()
         self.chk_autoplay.setChecked(self.config_data.get("autoplay", False))
-        self.worker.autoplay_ui_signal.connect(self.chk_autoplay.setChecked)
+        self.worker.autoplay_ui_signal.connect(self.chk_autoplay.setChecked, Qt.QueuedConnection)
         form_layout.addRow("Autoplay (BOT):", self.chk_autoplay)
         
         # Limit Strength (Checkbox) - Ép mặc định luôn BẬT
@@ -760,7 +770,7 @@ if __name__ == "__main__":
     
     # 4. Tạo và chạy Luồng phụ (Worker) để xử lý CV & Engine ngầm
     worker = ChessWorker(capture, engine)
-    worker.moves_ready.connect(overlay.update_moves) # Nối Signal của Worker vào hàm vẽ của UI
+    worker.moves_ready.connect(overlay.update_moves, Qt.QueuedConnection) # Nối Signal của Worker vào hàm vẽ của UI
     worker.start()
     
     # [Thêm đoạn này] Khởi tạo Bảng điều khiển

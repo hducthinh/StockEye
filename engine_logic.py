@@ -2,9 +2,11 @@ import json
 import chess
 import chess.engine
 import os
+import threading
 
 class ChessEngine:
     def __init__(self, engine_path="engine/stockfish-windows-x86-64-avx2.exe", config_path="config.json"):
+        self.lock = threading.RLock()
         # Nạp cấu hình từ file json
         self.config = {
             "threads": 2,
@@ -245,17 +247,20 @@ class ChessEngine:
         search_limit = limit + 1 if is_human_error else limit
             
         try:
+            with self.lock:
+                board_copy = self.board.copy()
+                
             if self.config.get("uci_limit_strength"):
                 top_moves = []
                 banned_moves = set()
                 
                 # Vòng lặp liên tục gọi hàm play() để lấy ra N nước đi theo chuẩn Elo
                 for _ in range(search_limit):
-                    legal_moves = [m for m in self.board.legal_moves if m not in banned_moves]
+                    legal_moves = [m for m in board_copy.legal_moves if m not in banned_moves]
                     if not legal_moves:
                         break
                         
-                    result = self.engine.play(self.board, chess.engine.Limit(time=self.config["time_limit"]), root_moves=legal_moves, info=chess.engine.INFO_ALL)
+                    result = self.engine.play(board_copy, chess.engine.Limit(time=self.config["time_limit"]), root_moves=legal_moves, info=chess.engine.INFO_ALL)
                     if not result.move:
                         break
                         
@@ -284,7 +289,7 @@ class ChessEngine:
             else:
                 # Nếu không giới hạn sức mạnh (Max), dùng analyse() để lấy Top nước đi mạnh nhất
                 info = self.engine.analyse(
-                    self.board, 
+                    board_copy, 
                     chess.engine.Limit(time=self.config["time_limit"]), # Giới hạn thời gian suy nghĩ
                     multipv=search_limit
                 )
