@@ -144,7 +144,23 @@ class ChessEngine:
                                 weight = n - changed_list.index(sq)
                                 score += (weight * 10) + 1000
                         else:
-                            score -= 3000 # Phạt cực nặng nếu sinh ra ô không có thực
+                            # NGOẠI LỆ NHẬP THÀNH: Bỏ qua hình phạt nếu ô thuộc về Xe nhập thành (do chess client thường không highlight Xe)
+                            is_castling_rook_sq = False
+                            tmp_board = orig_board.copy()
+                            for m in current_seq:
+                                if tmp_board.is_castling(m):
+                                    if tmp_board.turn == chess.WHITE:
+                                        if m.to_square == chess.G1 and sq in ['h1', 'f1']: is_castling_rook_sq = True
+                                        elif m.to_square == chess.C1 and sq in ['a1', 'd1']: is_castling_rook_sq = True
+                                    else:
+                                        if m.to_square == chess.G8 and sq in ['h8', 'f8']: is_castling_rook_sq = True
+                                        elif m.to_square == chess.C8 and sq in ['a8', 'd8']: is_castling_rook_sq = True
+                                tmp_board.push(m)
+                                
+                            if is_castling_rook_sq:
+                                score += 1000 # Coi như đã khớp thành công
+                            else:
+                                score -= 3000 # Phạt cực nặng nếu sinh ra ô không có thực
                             
                     # 2. Phạt nếu bỏ sót ô thực tế (unexplained squares)
                     for sq in changed_list:

@@ -257,7 +257,21 @@ class BoardCapture:
         else:
             turn = turn_to_move
             
-        # Mặc định mất quyền nhập thành và không bắt tốt qua đường khi resync giữa ván
-        fen_full = f"{fen_board} {turn} - - 0 1"
+        # Khôi phục quyền nhập thành dựa trên vị trí hiện tại của Vua và Xe
+        castling = ""
+        # Trắng: Vua ở e1 (board[7][4]), Xe h1 (board[7][7]), Xe a1 (board[7][0])
+        if board[7][4] == 'K':
+            if board[7][7] == 'R': castling += "K"
+            if board[7][0] == 'R': castling += "Q"
+        # Đen: Vua ở e8 (board[0][4]), Xe h8 (board[0][7]), Xe a8 (board[0][0])
+        if board[0][4] == 'k':
+            if board[0][7] == 'r': castling += "k"
+            if board[0][0] == 'r': castling += "q"
+            
+        if not castling:
+            castling = "-"
+            
+        # Mặc định không bắt tốt qua đường (En Passant) khi resync giữa ván vì thiếu lịch sử
+        fen_full = f"{fen_board} {turn} {castling} - 0 1"
         
         return fen_full
