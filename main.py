@@ -258,6 +258,8 @@ class ChessWorker(QThread):
                         continue
                         
                     bot_delay = self.config_data.get("bot_delay", 0.15)
+                    if self.current_time_left < 5.0:
+                        bot_delay = 0.2
                     
                     # Fitts Law approximation for travel time (luôn áp dụng)
                     dist = math.hypot(end_px[0] - start_px[0], end_px[1] - start_px[1])
