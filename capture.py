@@ -315,3 +315,73 @@ class BoardCapture:
         fen_full = f"{fen_board} {turn} {castling} - 0 1"
         
         return fen_full
+
+    def find_new_game_button(self, img):
+        import cv2
+        import numpy as np
+        import glob
+        import os
+
+        if not hasattr(self, '_new_game_templates'):
+            self._new_game_templates = []
+            for path in glob.glob("templates/ui/*.png"):
+                if os.path.exists(path):
+                    tpl = cv2.imread(path, cv2.IMREAD_COLOR)
+                    if tpl is not None:
+                        self._new_game_templates.append(tpl)
+
+        if not self._new_game_templates:
+            return None
+
+        # Tìm trên toàn bộ bàn cờ thay vì crop
+        crop = img
+        x1, y1 = 0, 0
+
+        for tpl in self._new_game_templates:
+            if tpl.shape[0] > crop.shape[0] or tpl.shape[1] > crop.shape[1]:
+                continue
+                
+            res = cv2.matchTemplate(crop, tpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            
+            if max_val > 0.8:
+                # Get center of template
+                cx = max_loc[0] + tpl.shape[1] // 2
+                cy = max_loc[1] + tpl.shape[0] // 2
+                
+                # Convert to absolute screen coordinates
+                abs_x = self.bbox["left"] + x1 + cx
+                abs_y = self.bbox["top"] + y1 + cy
+                return (abs_x, abs_y)
+        return None
+
+    def is_start_position_fast(self, img):
+        import cv2
+        
+        row_height = self.sq_height
+        
+        # Rank 7 (index 1) and Rank 2 (index 6)
+        y1_r7 = int(1 * row_height)
+        y2_r7 = int(2 * row_height)
+        rank7_img = img[y1_r7:y2_r7, :]
+        
+        y1_r2 = int(6 * row_height)
+        y2_r2 = int(7 * row_height)
+        rank2_img = img[y1_r2:y2_r2, :]
+        
+        def get_edges(roi):
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(gray, 50, 150)
+            return cv2.countNonZero(edges)
+            
+        edge7 = get_edges(rank7_img)
+        edge2 = get_edges(rank2_img)
+        
+        # Ngưỡng động dựa trên kích thước bàn cờ (tránh lỗi khi bàn cờ to/nhỏ)
+        # Đường ranh giới dọc giữa 8 ô cờ có 7 đường x row_height. 
+        # Nếu có 8 quân tốt, số lượng cạnh sẽ tăng thêm rất nhiều (thường > 15 * row_height)
+        threshold = 10 * row_height 
+        
+        if edge7 > threshold and edge2 > threshold:
+            return True
+        return False

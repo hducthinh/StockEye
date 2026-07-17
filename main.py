@@ -19,6 +19,7 @@ class ChessWorker(QThread):
     moves_ready = pyqtSignal(list)
     toggle_pause_signal = pyqtSignal()
     autoplay_ui_signal = pyqtSignal(bool)
+    autofarm_ui_signal = pyqtSignal(bool)
 
     def __init__(self, capture, engine):
         super().__init__()
@@ -64,6 +65,15 @@ class ChessWorker(QThread):
         keyboard.on_press_key("esc", kill_switch)
         keyboard.on_press_key("2", lambda _: self.request_midgame_sync(turn="auto_suggest"))
         keyboard.on_press_key("3", lambda _: self.request_midgame_sync(turn="auto"))
+        
+        self.auto_farm = False
+        def toggle_autofarm_switch(_):
+            self.auto_farm = not getattr(self, 'auto_farm', False)
+            state = "BẬT" if self.auto_farm else "TẮT"
+            print(f"\n[Autofarm] Chức năng tự động tìm trận đã được {state} (Bấm 4 để chuyển đổi)!")
+            self.autofarm_ui_signal.emit(self.auto_farm)
+            
+        keyboard.on_press_key("4", toggle_autofarm_switch)
 
     def request_midgame_sync(self, turn):
         if self.is_paused:
@@ -97,16 +107,7 @@ class ChessWorker(QThread):
 
     def run(self):
         print("\n[Worker] Bắt đầu theo dõi bàn cờ...")
-        print("="*40)
-        print("🔥 [HOTKEY CỜ CHỚP] 🔥")
-        print(" - Nhấn phím 1: Bật / Tắt tạm dừng để vẽ chiến thuật")
-        print(" - Nhấn phím 2: Tự động nhận diện Phe & Gợi ý nước cờ")
-        print(" - Nhấn phím 3: Tự động nhận diện Phe & Bật Autoplay ngay lập tức")
-        print(" - Nhấn phím ESC: Kill Switch (Tắt và xóa lệnh chuột ngay lập tức)")
-        print(" - Cấu hình sức mạnh/thời gian tự động cập nhật khi bạn lưu file config.json")
-        print(" - Nhấn Ctrl+C ở Terminal để thoát")
-        print("\n💡 MẸO: Nếu bị lỡ nước đi, bạn có thể GÕ TRỰC TIẾP nước đi (vd: e2e4) vào Terminal này rồi nhấn Enter để đồng bộ lại!")
-        print("="*40)
+
         
         prev_img = self.capture.get_board_image()
         last_stable_img = prev_img
@@ -162,6 +163,60 @@ class ChessWorker(QThread):
                     time.sleep(0.5)
         threading.Thread(target=clock_worker, daemon=True).start()
         
+        # Thread Autofarm (Tự động bấm New Game)
+        self.is_waiting_for_match = False
+        self.match_search_start_time = 0
+        
+        def autofarm_worker():
+            import ctypes
+            import time
+            while self.running:
+                if getattr(self, 'auto_farm', False) and not self.is_paused:
+                    try:
+                        curr_img = self.capture.get_board_image()
+                        
+                        if not self.is_waiting_for_match:
+                            btn_pos = self.capture.find_new_game_button(curr_img)
+                            if btn_pos:
+                                print(f"[Autofarm] Phát hiện nút New Game/Rematch tại {btn_pos}! Tiến hành click...")
+                                self.is_waiting_for_match = True
+                                self.match_search_start_time = time.time()
+                                
+                                # Click
+                                rx, ry = btn_pos
+                                ctypes.windll.user32.SetCursorPos(int(rx), int(ry))
+                                time.sleep(0.1)
+                                ctypes.windll.user32.mouse_event(2, 0, 0, 0, 0) # LEFTDOWN
+                                time.sleep(0.05)
+                                ctypes.windll.user32.mouse_event(4, 0, 0, 0, 0) # LEFTUP
+                                time.sleep(0.05)
+                                ctypes.windll.user32.SetCursorPos(10, 10)
+                                
+                                # Reset board
+                                self.engine.reset_board()
+                                self.engine.white_moves = []
+                                self.engine.black_moves = []
+                                
+                                # Né hoạt ảnh Modal fade-out
+                                time.sleep(0.5)
+                        else:
+                            # Đang đợi trận mới (Polling)
+                            if time.time() - self.match_search_start_time > 60:
+                                print("[Autofarm] Timeout! Quá 60s không vào trận mới. Hủy trạng thái chờ.")
+                                self.is_waiting_for_match = False
+                            else:
+                                if self.capture.is_start_position_fast(curr_img):
+                                    print("[Autofarm] Bàn cờ mới đã load xong! Chuẩn bị chiến đấu...")
+                                    time.sleep(0.2) # Chờ giao diện ổn định hẳn
+                                    self.is_waiting_for_match = False
+                                    self.request_midgame_sync(turn="auto")
+                    except Exception as e:
+                        pass
+                
+                time.sleep(1.0 if not self.is_waiting_for_match else 0.5)
+
+        threading.Thread(target=autofarm_worker, daemon=True).start()
+        
         # Thread điều khiển chuột (Click Worker)
         def click_worker():
             import ctypes
@@ -211,8 +266,27 @@ class ChessWorker(QThread):
                     
                     action_log = "Normal"
                     
+                    # Check Mate Premove
+                    is_mate_premove = False
+                    if "score" in ctx and isinstance(ctx["score"], str):
+                        s = ctx["score"]
+                        try:
+                            if self.capture.player_color == "white" and s.startswith("M") and not s.startswith("M-"):
+                                mate_val = int(s[1:])
+                                if 1 <= mate_val <= 3: is_mate_premove = True
+                            elif self.capture.player_color == "black" and s.startswith("M-"):
+                                mate_val = int(s[2:])
+                                if 1 <= mate_val <= 3: is_mate_premove = True
+                        except:
+                            pass
+                    
+                    # Quy tắc Tối thượng: Mate Premove (Hard-Override)
+                    if is_mate_premove:
+                        reaction_time = 0.01
+                        travel_time = 0.02
+                        action_log = "Mate Premove"
                     # Quy tắc Tối thượng: Time Scramble (Hard-Override)
-                    if is_scramble:
+                    elif is_scramble:
                         reaction_time = max(0.01, random.gauss(0.05, 0.02)) + bot_delay * 0.2
                         travel_time = 0.02
                         action_log = "Scramble"
@@ -261,6 +335,9 @@ class ChessWorker(QThread):
                     # Execute clicks
                     move_and_click(start_px[0], start_px[1], 0, 0)
                     move_and_click(end_px[0], end_px[1], 0, travel_time)
+                    
+                    self.last_bot_click_time = time.time()
+                    self.waiting_for_board_change = True
                     
                     # Reset chuột về 1 góc để tránh hover tooltip che bàn cờ
                     time.sleep(0.05)
@@ -382,6 +459,12 @@ class ChessWorker(QThread):
                 except:
                     pass
                     
+            # Auto-Recovery: Nếu đã click mà 3s sau bàn cờ không đổi (nước đi không hợp lệ)
+            if getattr(self, 'waiting_for_board_change', False) and time.time() - getattr(self, 'last_bot_click_time', 0) > 3.0:
+                print("[System] CẢNH BÁO: Đã quá 3s kể từ khi Bot click mà bàn cờ không đổi. Tự động phục hồi (Auto-Recovery)!")
+                self.waiting_for_board_change = False
+                self.request_midgame_sync(turn="auto")
+                
             # Kiểm tra xem người dùng có nhập lệnh hoặc nước đi thủ công không
             if self.manual_move_request:
                 cmd_str = self.manual_move_request
@@ -467,6 +550,7 @@ class ChessWorker(QThread):
                     
                     if pushed_moves:
                         self.analysis_queue.put(True)
+                        self.waiting_for_board_change = False
                         # Lưu lại ảnh TRƯỚC KHI cập nhật mốc mới để đối chiếu nếu bị Hover Cancel
                         pre_move_img = last_stable_img
                         # Cập nhật mốc tĩnh mới vì đã áp dụng nước đi thành công!
@@ -514,12 +598,14 @@ class ChessWorker(QThread):
             
         ui_data = []
         best_m = None
+        best_score = None
         for item in top_moves:
             m = item["move"] # 'e2e4' hoặc ['e2e4', 'e7e5', 'g1f3']
             score = item["score"]
             
             if best_m is None:
                 best_m = m[0] if isinstance(m, list) else m
+                best_score = score
             
             try:
                 if isinstance(m, list):
@@ -568,7 +654,8 @@ class ChessWorker(QThread):
                         "fullmove_number": self.engine.board.fullmove_number,
                         "is_in_check": self.engine.board.is_check(),
                         "opponent_captured": False,
-                        "legal_moves_count": len(list(self.engine.board.legal_moves))
+                        "legal_moves_count": len(list(self.engine.board.legal_moves)),
+                        "score": best_score
                     }
                     
                     # Check if opponent's last move was a capture
@@ -677,16 +764,41 @@ class ControlPanelUI(QWidget):
         layout.addWidget(self.btn_toggle)
         
         # Nút Gợi Ý
-        self.btn_suggest = QPushButton("[2] GỢI Ý (Tự nhận diện phe)")
+        self.btn_suggest = QPushButton("[2] GỢI Ý")
         self.btn_suggest.setStyleSheet("background-color: white; color: black; font-weight: bold; padding: 10px;")
         self.btn_suggest.clicked.connect(lambda: self.worker.request_midgame_sync("auto_suggest"))
         layout.addWidget(self.btn_suggest)
         
-        # Nút Autoplay (Tự nhận diện)
-        self.btn_auto = QPushButton("[3] AUTOPLAY (Tự nhận diện phe)")
+        # Nút Autoplay
+        init_autoplay_state = "ĐANG CHẠY" if self.config_data.get("autoplay", False) else "ĐÃ DỪNG"
+        self.btn_auto = QPushButton(f"[3] AUTOPLAY: {init_autoplay_state}")
         self.btn_auto.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold; padding: 10px;")
         self.btn_auto.clicked.connect(lambda: self.worker.request_midgame_sync("auto"))
+        
+        def update_autoplay_btn_text(state):
+            txt = "ĐANG CHẠY" if self.chk_autoplay.isChecked() else "ĐÃ DỪNG"
+            self.btn_auto.setText(f"[3] AUTOPLAY: {txt}")
+        self.chk_autoplay.stateChanged.connect(update_autoplay_btn_text)
+        
         layout.addWidget(self.btn_auto)
+        
+        # Nút Autofarm
+        init_autofarm_state = "ĐANG CHẠY" if getattr(self.worker, 'auto_farm', False) else "ĐÃ DỪNG"
+        self.btn_autofarm = QPushButton(f"[4] AUTOFARM: {init_autofarm_state}")
+        self.btn_autofarm.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 10px;")
+        def on_autofarm_click():
+            self.worker.auto_farm = not getattr(self.worker, 'auto_farm', False)
+            state = "ĐANG CHẠY" if self.worker.auto_farm else "ĐÃ DỪNG"
+            self.btn_autofarm.setText(f"[4] AUTOFARM: {state}")
+            print(f"\n[Autofarm] Chức năng tự động tìm trận đã được {state}!")
+        self.btn_autofarm.clicked.connect(on_autofarm_click)
+        
+        def update_autofarm_btn_text(is_on):
+            txt = "ĐANG CHẠY" if is_on else "ĐÃ DỪNG"
+            self.btn_autofarm.setText(f"[4] AUTOFARM: {txt}")
+        self.worker.autofarm_ui_signal.connect(update_autofarm_btn_text, Qt.QueuedConnection)
+        
+        layout.addWidget(self.btn_autofarm)
         
         self.setLayout(layout)
         

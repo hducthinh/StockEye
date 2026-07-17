@@ -271,8 +271,6 @@ class ChessEngine:
                         if score_obj.is_mate():
                             mate_in = score_obj.mate()
                             score_str = f"M{mate_in}"
-                            if mate_in > 0 and "pv" in result.info:
-                                best_move = [result.info["pv"][i].uci() for i in range(0, len(result.info["pv"]), 2)]
                         else:
                             val = score_obj.score() / 100.0
                             score_str = f"+{val:.2f}" if val > 0 else f"{val:.2f}"
@@ -307,9 +305,6 @@ class ChessEngine:
                         if score_obj.is_mate():
                             mate_in = score_obj.mate()
                             score = f"M{mate_in}"
-                            # Nếu phe ta đang chiếu bí, trả về toàn bộ nước của phe ta để Premove
-                            if mate_in > 0:
-                                best_move = [entry["pv"][i].uci() for i in range(0, len(entry["pv"]), 2)]
                         else:
                             val = score_obj.score() / 100.0
                             score = f"+{val:.2f}" if val > 0 else f"{val:.2f}"
