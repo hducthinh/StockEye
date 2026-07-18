@@ -25,6 +25,7 @@ class ChessEngine:
         self.board = chess.Board() # Khởi tạo bàn cờ ở trạng thái bắt đầu (thế chuẩn)
         self.white_moves = []
         self.black_moves = []
+        self.troll_check_count = 0
         
         # Đường dẫn tuyệt đối hoặc tương đối tới Stockfish
         if not os.path.exists(engine_path):
@@ -68,9 +69,18 @@ class ChessEngine:
         self.apply_config_to_engine()
 
     def reset_board(self):
-        self.board.reset()
-        self.white_moves = []
-        self.black_moves = []
+        with self.lock:
+            self.board.reset()
+            self.white_moves = []
+            self.black_moves = []
+            self.troll_check_count = 0
+            
+    def set_board_fen(self, fen):
+        with self.lock:
+            self.board.set_fen(fen)
+            self.white_moves = []
+            self.black_moves = []
+            self.troll_check_count = 0
 
     def is_potential_hover_cancel(self, changed_squares):
         """Kiểm tra logic xem có phải người dùng thả quân về chỗ cũ không"""
@@ -86,14 +96,15 @@ class ChessEngine:
         return False
         
     def undo_last_move(self):
-        if not self.board.move_stack:
-            return None
-        popped = self.board.pop()
-        if self.board.turn == chess.WHITE:
-            if self.white_moves: self.white_moves.pop()
-        else:
-            if self.black_moves: self.black_moves.pop()
-        return popped
+        with self.lock:
+            if not self.board.move_stack:
+                return None
+            popped = self.board.pop()
+            if self.board.turn == chess.WHITE:
+                if self.white_moves: self.white_moves.pop()
+            else:
+                if self.black_moves: self.black_moves.pop()
+            return popped
 
     def _get_net_changes(self, orig_board, seq):
         test_board = orig_board.copy()
@@ -171,7 +182,7 @@ class ChessEngine:
                             # Khi highlight của nước đi trước biến mất, nó tạo ra sự thay đổi màu sắc.
                             if sq == last_move_from or sq == last_move_to:
                                 continue
-                            # [Sửa lỗi] Giảm mức phạt từ 1000 xuống 600
+                            # [Sửa lỗi] Phạt nặng (600đ) để tránh ảo giác nhận nhầm nước đi khi có quá nhiều ô nhiễu!
                             score -= 600
                             
                     # 3. Phạt độ dài chuỗi (tránh DFS cố tình nối dài chuỗi để farm điểm trên ô fading)
@@ -219,33 +230,63 @@ class ChessEngine:
 
     def infer_and_push_move(self, changed_squares):
         """Trúng thưởng thuật toán DFS 2-ply search siêu việt"""
-        pushed_moves = []
-        best_seq = self._find_best_sequence(changed_squares)
-        
-        for move in best_seq:
-            if self.board.turn == chess.WHITE:
-                self.white_moves.append(move)
-            else:
-                self.black_moves.append(move)
-                
-            self.board.push(move)
-            pushed_moves.append(move.uci())
-            print(f"[Engine] Đã cập nhật nước đi: {move.uci()}")
+        with self.lock:
+            pushed_moves = []
+            best_seq = []
             
-        return pushed_moves
+            # [TỐI ƯU] Hash Map O(1) Lookup
+            if len(changed_squares) == 2:
+                legal_moves_map = {}
+                for m in self.board.legal_moves:
+                    key = f"{chess.square_name(m.from_square)}{chess.square_name(m.to_square)}"
+                    if key not in legal_moves_map or m.promotion == chess.QUEEN:
+                        legal_moves_map[key] = m
+                
+                sq1, sq2 = changed_squares[0], changed_squares[1]
+                fast_move = legal_moves_map.get(f"{sq1}{sq2}") or legal_moves_map.get(f"{sq2}{sq1}")
+                if fast_move:
+                    best_seq = [fast_move]
+            
+            if not best_seq:
+                best_seq = self._find_best_sequence(changed_squares)
+            
+            for move in best_seq:
+                if self.board.turn == chess.WHITE:
+                    self.white_moves.append(move)
+                else:
+                    self.black_moves.append(move)
+                    
+                self.board.push(move)
+                pushed_moves.append(move.uci())
+                print(f"[Engine] Đã cập nhật nước đi: {move.uci()}")
+                
+            return pushed_moves
 
-    def get_top_moves(self, limit=3):
+    def get_top_moves(self, limit=3, time_left=60.0):
         """Lấy danh sách Top N nước đi tốt nhất từ Stockfish"""
         if not self.engine:
             return []
             
         import random
         human_error_rate = self.config.get("human_error_rate", 0.0)
-        is_human_error = random.random() < human_error_rate
+        
+        # Override nếu thời gian đang rất thấp (Scramble Mode)
+        engine_time_limit = self.config["time_limit"]
+        is_human_error = False
+        
+        if time_left <= 5.0:
+            engine_time_limit = 0.01
+            limit = 1
+        elif time_left <= 15.0:
+            engine_time_limit = min(0.05, engine_time_limit)
+            limit = 1
+        else:
+            is_human_error = random.random() < human_error_rate
         
         # Lấy dư ra 1 nước nếu có kích hoạt Human Error
-        search_limit = limit + 1 if is_human_error else limit
-            
+        # Nâng MultiPV lên để lấy 4-5 nước đi khi kích hoạt Human Error
+        actual_search = max(limit + 4, 5) if is_human_error else limit
+        
         try:
             with self.lock:
                 board_copy = self.board.copy()
@@ -255,17 +296,21 @@ class ChessEngine:
                 banned_moves = set()
                 
                 # Vòng lặp liên tục gọi hàm play() để lấy ra N nước đi theo chuẩn Elo
-                for _ in range(search_limit):
+                for _ in range(actual_search):
                     legal_moves = [m for m in board_copy.legal_moves if m not in banned_moves]
                     if not legal_moves:
                         break
                         
-                    result = self.engine.play(board_copy, chess.engine.Limit(time=self.config["time_limit"]), root_moves=legal_moves, info=chess.engine.INFO_ALL)
+                    result = self.engine.play(board_copy, chess.engine.Limit(time=engine_time_limit), root_moves=legal_moves, info=chess.engine.INFO_ALL)
                     if not result.move:
                         break
                         
                     best_move = result.move.uci()
+                    is_capture = board_copy.is_capture(result.move)
+                    
                     score_str = "Elo " + str(self.config["uci_elo"])
+                    sort_val = 0
+                    
                     if result.info and "score" in result.info:
                         score_obj = result.info["score"].white()
                         if score_obj.is_mate():
@@ -275,30 +320,48 @@ class ChessEngine:
                             val = score_obj.score() / 100.0
                             score_str = f"+{val:.2f}" if val > 0 else f"{val:.2f}"
                             
-                    top_moves.append({"move": best_move, "score": score_str})
+                        pov_score = result.info["score"].pov(board_copy.turn)
+                        if pov_score.is_mate():
+                            sort_val = 100000 - abs(pov_score.mate())
+                        else:
+                            sort_val = pov_score.score()
+                    
+                    # Chế độ BM (Ăn quân tuyệt đối): Nếu lợi thế >= BM Threshold, ưu tiên ăn quân hơn cả Mate
+                    # Nếu chưa lợi thế, cộng Trade Bias để khuyến khích trao đổi quân
+                    bm_thresh = self.config.get("bm_threshold", 400)
+                    trade_b = self.config.get("trade_bias", 150)
+                    if is_capture:
+                        if sort_val >= bm_thresh:
+                            sort_val += 200000
+                        elif sort_val > 0:
+                            sort_val += trade_b
+                            
+                    pv_list = []
+                    if result.info and "pv" in result.info:
+                        pv_list = [m.uci() for m in result.info["pv"]]
+                    
+                    top_moves.append({
+                        "move": best_move, 
+                        "score": score_str, 
+                        "sort_val": sort_val,
+                        "pv": pv_list
+                    })
                     banned_moves.add(result.move)
                 
-                # Bỏ qua nước Best nếu giả lập lỗi con người
-                if is_human_error and len(top_moves) > 0:
-                    top_moves.pop(0)
-                    print("[Engine] 🎭 Kích hoạt Human Error: Đang hiển thị nước Inaccuracy thay thế (Elo Mode)!")
-                    
-                return top_moves[:limit]
             else:
                 # Nếu không giới hạn sức mạnh (Max), dùng analyse() để lấy Top nước đi mạnh nhất
                 info = self.engine.analyse(
                     board_copy, 
-                    chess.engine.Limit(time=self.config["time_limit"]), # Giới hạn thời gian suy nghĩ
-                    multipv=search_limit
+                    chess.engine.Limit(time=engine_time_limit), # Giới hạn thời gian suy nghĩ
+                    multipv=actual_search
                 )
             
                 top_moves = []
-                for i, entry in enumerate(info):
-                    if is_human_error and i == 0:
-                        continue # Bỏ qua nước Best hoàn toàn
-                        
+                for entry in info:
                     if "pv" in entry:
-                        best_move = entry["pv"][0].uci() # pv là list các nước đi tiếp theo (Principal Variation)
+                        best_move_obj = entry["pv"][0]
+                        best_move = best_move_obj.uci() # pv là list các nước đi tiếp theo (Principal Variation)
+                        is_capture = board_copy.is_capture(best_move_obj)
                         score_obj = entry["score"].white()
                         
                         # Quy đổi điểm số
@@ -309,17 +372,151 @@ class ChessEngine:
                             val = score_obj.score() / 100.0
                             score = f"+{val:.2f}" if val > 0 else f"{val:.2f}"
                             
+                        pov_score = entry["score"].pov(board_copy.turn)
+                        sort_val = 0
+                        if pov_score.is_mate():
+                            sort_val = 100000 - abs(pov_score.mate())
+                        else:
+                            sort_val = pov_score.score()
+                            
+                        # Chế độ BM (Ăn quân tuyệt đối): Nếu lợi thế >= BM Threshold, ưu tiên ăn quân hơn cả Mate
+                        # Trade bias
+                        bm_thresh = self.config.get("bm_threshold", 400)
+                        trade_b = self.config.get("trade_bias", 150)
+                        if is_capture:
+                            if sort_val >= bm_thresh:
+                                sort_val += 200000
+                            elif sort_val > 0:
+                                sort_val += trade_b
+                            
                         top_moves.append({
                             "move": best_move,
-                            "score": score
+                            "score": score,
+                            "sort_val": sort_val,
+                            "pv": [m.uci() for m in entry["pv"]]
                         })
+
+            # --- BM EXTRA SEARCH (Tìm vét nước thí quân) ---
+            bm_thresh = self.config.get("bm_threshold", 400)
+            bm_cap_thresh = self.config.get("bm_capture_threshold", 200)
+            if len(top_moves) > 0:
+                best_sort = max([m["sort_val"] for m in top_moves])
+                if best_sort >= bm_thresh:
+                    all_caps = [m for m in board_copy.legal_moves if board_copy.is_capture(m)]
+                    existing = set(m["move"] for m in top_moves)
+                    missing = [m for m in all_caps if m.uci() not in existing]
+                    
+                    if missing:
+                        try:
+                            cap_info = self.engine.analyse(
+                                board_copy,
+                                chess.engine.Limit(time=0.1),
+                                root_moves=missing,
+                                multipv=len(missing)
+                            )
+                            for entry in cap_info:
+                                if "pv" in entry:
+                                    cap_m = entry["pv"][0]
+                                    cap_s = entry["score"].white()
+                                    if cap_s.is_mate():
+                                        cap_score_str = f"M{cap_s.mate()}"
+                                    else:
+                                        v = cap_s.score() / 100.0
+                                        cap_score_str = f"+{v:.2f}" if v > 0 else f"{v:.2f}"
+                                        
+                                    cap_pov = entry["score"].pov(board_copy.turn)
+                                    if cap_pov.is_mate():
+                                        cap_sort = 100000 - abs(cap_pov.mate())
+                                    else:
+                                        cap_sort = cap_pov.score()
+                                        
+                                    if cap_sort >= bm_cap_thresh:
+                                        cap_sort += 200000
+                                        top_moves.append({
+                                            "move": cap_m.uci(),
+                                            "score": cap_score_str,
+                                            "sort_val": cap_sort
+                                        })
+                        except Exception as e:
+                            print(f"[Engine] BM Extra Search lỗi: {e}")
+
+                    
+            top_moves.sort(key=lambda x: x["sort_val"], reverse=True)
+            
+            # TROLL MODE
+            is_troll_move = False
+            if len(top_moves) > 0 and self.troll_check_count < 20:
+                if top_moves[0]["sort_val"] > 90000: # Phe ta đang có Mate
+                    troll_candidates = []
+                    for i in range(len(top_moves)):
+                        m_obj = chess.Move.from_uci(top_moves[i]["move"])
+                        if board_copy.gives_check(m_obj):
+                            if top_moves[i]["sort_val"] > 0:
+                                troll_candidates.append(i)
+                                
+                    if troll_candidates:
+                        non_m1 = [i for i in troll_candidates if top_moves[i]["sort_val"] != 99999]
+                        selected_idx = random.choice(non_m1) if non_m1 else troll_candidates[0]
+                        selected_move = top_moves.pop(selected_idx)
+                        top_moves.insert(0, selected_move)
+                        is_troll_move = True
+                        self.troll_check_count += 1
+                        print(f"[Engine] 😈 TROLL MODE: Kéo dài nỗi đau! (Chiếu lần {self.troll_check_count}/20)")
                         
-                    if len(top_moves) >= limit:
-                        break
+            if not is_troll_move:
+                self.troll_check_count = 0
+                # Override: Không giả lập lỗi nếu có cơ hội chiếu hết trong <= 4 nước
+                if is_human_error and len(top_moves) > 0:
+                    if top_moves[0]["score"].startswith("M"):
+                        m_val = top_moves[0]["score"][1:].lstrip("-")
+                        if m_val.isdigit() and int(m_val) <= 4:
+                            is_human_error = False
+                            
+            top_moves[0]["is_troll_check"] = is_troll_move
+                    
+            # Smart Human Error
+            if is_human_error and len(top_moves) > 1:
+                best_score_val = top_moves[0]["sort_val"]
+                candidates = []
+                
+                for i in range(1, len(top_moves)):
+                    diff = best_score_val - top_moves[i]["sort_val"]
+                    # Lọc nước Okay Move: rớt Eval từ 80 đến 250 centipawns
+                    if 80 <= diff <= 250:
+                        # Anti-blunder: Nếu thế cờ đang >= -1.0, không chọn nước rớt xuống < -2.0
+                        if best_score_val >= -100 and top_moves[i]["sort_val"] < -200:
+                            continue
+                        candidates.append(i)
                         
-                if is_human_error:
+                if candidates:
+                    selected_idx = random.choice(candidates)
+                    selected_move = top_moves.pop(selected_idx)
+                    top_moves.insert(0, selected_move)
+                    top_moves.pop(1)
+                    print(f"[Engine] 🎭 Smart Human Error: Đã chọn nước top {selected_idx+1} thay thế!")
+                else:
+                    top_moves.pop(0)
                     print("[Engine] 🎭 Kích hoạt Human Error: Đang hiển thị nước Inaccuracy thay thế!")
-                return top_moves
+            # [TỐI ƯU] Predictive Premove Check
+            if len(top_moves) > 0 and len(top_moves[0].get("pv", [])) >= 3:
+                pv = top_moves[0]["pv"]
+                our_move_uci = pv[0]
+                opp_move_uci = pv[1]
+                our_premove_uci = pv[2]
+                
+                board_test = board_copy.copy()
+                try:
+                    board_test.push(chess.Move.from_uci(our_move_uci))
+                    # Nếu đối thủ chỉ có 1 nước đi duy nhất, ta chắc chắn họ sẽ đi nước đó
+                    if len(list(board_test.legal_moves)) == 1:
+                        top_moves[0]["forced_premove"] = {
+                            "expected_opp_move": opp_move_uci,
+                            "our_premove": our_premove_uci
+                        }
+                except Exception:
+                    pass
+
+            return top_moves[:limit]
             
         except Exception as e:
             print(f"[Engine] Lỗi phân tích: {e}")
@@ -328,4 +525,7 @@ class ChessEngine:
     def close(self):
         """Đóng an toàn Stockfish khi tắt app"""
         if self.engine:
-            self.engine.quit()
+            try:
+                self.engine.quit()
+            except Exception as e:
+                print(f"[Engine] Đã ngắt kết nối Stockfish (Tiến trình có thể đã tự đóng trước đó).")

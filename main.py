@@ -20,6 +20,7 @@ class ChessWorker(QThread):
     toggle_pause_signal = pyqtSignal()
     autoplay_ui_signal = pyqtSignal(bool)
     autofarm_ui_signal = pyqtSignal(bool)
+    exit_app_signal = pyqtSignal()
 
     def __init__(self, capture, engine):
         super().__init__()
@@ -74,6 +75,7 @@ class ChessWorker(QThread):
             self.autofarm_ui_signal.emit(self.auto_farm)
             
         keyboard.on_press_key("4", toggle_autofarm_switch)
+        keyboard.on_press_key("f4", lambda _: self.exit_app_signal.emit())
 
     def request_midgame_sync(self, turn):
         if self.is_paused:
@@ -225,19 +227,87 @@ class ChessWorker(QThread):
             import time
             import chess
             
-            def move_and_click(px_x, px_y, delay, travel_time):
-                # Random offset 15-20%
-                offset_limit = self.capture.sq_width * 0.15
-                rx = px_x + random.uniform(-offset_limit, offset_limit)
-                ry = px_y + random.uniform(-offset_limit, offset_limit)
+            def ease_in_out_cubic(t):
+                if t < 0.5:
+                    return 4 * t * t * t
+                else:
+                    return 1 - math.pow(-2 * t + 2, 3) / 2
+
+            def generate_bezier_curve(p0, p1, p2, p3, steps):
+                curve = []
+                for i in range(steps + 1):
+                    t = i / steps if steps > 0 else 1
+                    t = ease_in_out_cubic(t)
+                    x = (1-t)**3 * p0[0] + 3*(1-t)**2*t * p1[0] + 3*(1-t)*t**2 * p2[0] + t**3 * p3[0]
+                    y = (1-t)**3 * p0[1] + 3*(1-t)**2*t * p1[1] + 3*(1-t)*t**2 * p2[1] + t**3 * p3[1]
+                    curve.append((int(x), int(y)))
+                return curve
+
+            def human_move_mouse(target_x, target_y, duration, curvature_val):
+                class POINT(ctypes.Structure):
+                    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+                pt = POINT()
+                ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+                start_x, start_y = pt.x, pt.y
                 
-                time.sleep(travel_time)
-                ctypes.windll.user32.SetCursorPos(int(rx), int(ry))
+                p0 = (start_x, start_y)
+                p3 = (target_x, target_y)
+                dist = math.hypot(target_x - start_x, target_y - start_y)
                 
-                # Click (Down, sleep 20-50ms, Up)
-                ctypes.windll.user32.mouse_event(2, 0, 0, 0, 0) # LEFTDOWN
-                time.sleep(random.uniform(0.02, 0.05))
-                ctypes.windll.user32.mouse_event(4, 0, 0, 0, 0) # LEFTUP
+                offset_val = dist * (curvature_val / 100.0)
+                p1 = (
+                    start_x + (target_x - start_x) * 0.3 + random.uniform(-offset_val, offset_val),
+                    start_y + (target_y - start_y) * 0.3 + random.uniform(-offset_val, offset_val)
+                )
+                p2 = (
+                    start_x + (target_x - start_x) * 0.7 + random.uniform(-offset_val, offset_val),
+                    start_y + (target_y - start_y) * 0.7 + random.uniform(-offset_val, offset_val)
+                )
+                
+                steps = max(5, int(duration * 120))
+                curve = generate_bezier_curve(p0, p1, p2, p3, steps)
+                
+                start_time = time.perf_counter()
+                for i, (cx, cy) in enumerate(curve):
+                    ctypes.windll.user32.SetCursorPos(cx, cy)
+                    target_elapsed = (i / steps) * duration
+                    while time.perf_counter() - start_time < target_elapsed:
+                        pass
+                ctypes.windll.user32.SetCursorPos(int(target_x), int(target_y))
+
+            def move_and_click(px_x, px_y, delay, travel_time, context=None, move=True, click=True):
+                if move:
+                    offset_limit = self.capture.sq_width * 0.15
+                    rx = px_x + random.uniform(-offset_limit, offset_limit)
+                    ry = px_y + random.uniform(-offset_limit, offset_limit)
+                    
+                    enable_human = self.config_data.get("human_mouse", True)
+                    curvature_val = self.config_data.get("mouse_curvature", 30)
+                    
+                    if not enable_human:
+                        time.sleep(travel_time)
+                        ctypes.windll.user32.SetCursorPos(int(rx), int(ry))
+                    else:
+                        fullmove = context.get("fullmove_number", 99) if context else 99
+                        apply_overshoot = fullmove < 20 or self.current_time_left > 30.0
+                        
+                        # Không teleport, chỉ đẩy nhanh tốc độ vẽ
+                        actual_travel = max(0.005, travel_time)
+                        
+                        if apply_overshoot and random.random() < 0.5 and actual_travel > 0.05:
+                            os_x = rx + random.uniform(-offset_limit * 1.5, offset_limit * 1.5)
+                            os_y = ry + random.uniform(-offset_limit * 1.5, offset_limit * 1.5)
+                            human_move_mouse(os_x, os_y, actual_travel * 0.8, curvature_val)
+                            human_move_mouse(rx, ry, actual_travel * 0.2, curvature_val)
+                        else:
+                            human_move_mouse(rx, ry, actual_travel, curvature_val)
+                
+                if click:
+                    is_scr = context.get("is_scramble", False) if context else False
+                    ctypes.windll.user32.mouse_event(2, 0, 0, 0, 0) # LEFTDOWN
+                    time.sleep(0.005 if is_scr else random.uniform(0.02, 0.05))
+                    ctypes.windll.user32.mouse_event(4, 0, 0, 0, 0) # LEFTUP
+                    time.sleep(0.005 if is_scr else 0.03)
                 
             while self.running:
                 try:
@@ -250,6 +320,45 @@ class ChessWorker(QThread):
                     is_scramble = task["is_scramble"]
                     ctx = task["context"]
                     
+                    is_premove_hover = task.get("is_premove_hover", False)
+                    if is_premove_hover:
+                        expected_opp_move = ctx.get("expected_opp_move")
+                        print(f"[ClickWorker] PREDICTIVE PREMOVE! Đưa chuột tới {start_sq} và chờ đối thủ đi {expected_opp_move}...")
+                        
+                        # 1. Rê chuột tới start_px
+                        move_and_click(start_px[0], start_px[1], 0, 0.05, ctx, move=True, click=False)
+                        # 2. Nhấn giữ chuột trái (mô phỏng nhặt quân cờ)
+                        ctypes.windll.user32.mouse_event(2, 0, 0, 0, 0)
+                        # 3. Rê chuột tới end_px
+                        move_and_click(end_px[0], end_px[1], 0, 0.05, ctx, move=True, click=False)
+                        
+                        # 4. Chờ tín hiệu đối thủ đã đi đúng nước dự đoán
+                        start_wait = time.time()
+                        released = False
+                        while time.time() - start_wait < 15.0 and self.running:
+                            with self.engine.lock:
+                                if len(self.engine.board.move_stack) > 0:
+                                    last_move = self.engine.board.move_stack[-1].uci()
+                                    if last_move == expected_opp_move:
+                                        # ĐÚNG NƯỚC! NHẢ CHUỘT NGAY LẬP TỨC (0.001s)
+                                        ctypes.windll.user32.mouse_event(4, 0, 0, 0, 0)
+                                        released = True
+                                        print("[ClickWorker] ĐỐI THỦ ĐÃ ĐI! NHẢ PREMOVE NGAY LẬP TỨC! 0.001s")
+                                        break
+                                    # Nếu đối thủ đi nước khác hoặc đến lượt chúng ta bằng cách nào đó
+                                    elif self.engine.board.turn == (chess.WHITE if self.capture.player_color == "white" else chess.BLACK):
+                                        ctypes.windll.user32.mouse_event(4, 0, 0, 0, 0)
+                                        released = True
+                                        break
+                            time.sleep(0.005)
+                        
+                        if not released:
+                            ctypes.windll.user32.mouse_event(4, 0, 0, 0, 0)
+                            
+                        self.last_bot_click_time = time.time()
+                        self.waiting_for_board_change = True
+                        continue
+
                     # Double check FEN
                     with self.engine.lock:
                         current_fen = self.engine.board.fen()
@@ -259,7 +368,7 @@ class ChessWorker(QThread):
                         
                     bot_delay = self.config_data.get("bot_delay", 0.15)
                     if self.current_time_left < 5.0:
-                        bot_delay = 0.2
+                        bot_delay = 0.02
                     
                     # Fitts Law approximation for travel time (luôn áp dụng)
                     dist = math.hypot(end_px[0] - start_px[0], end_px[1] - start_px[1])
@@ -282,15 +391,26 @@ class ChessWorker(QThread):
                         except:
                             pass
                     
+                    # Quy tắc Tối thượng: Troll Mode
+                    if ctx.get("is_troll_check", False):
+                        reaction_time = 0.01
+                        travel_time = 0.02
+                        action_log = "Troll Check"
                     # Quy tắc Tối thượng: Mate Premove (Hard-Override)
-                    if is_mate_premove:
+                    elif is_mate_premove:
                         reaction_time = 0.01
                         travel_time = 0.02
                         action_log = "Mate Premove"
-                    # Quy tắc Tối thượng: Time Scramble (Hard-Override)
-                    elif is_scramble:
-                        reaction_time = max(0.01, random.gauss(0.05, 0.02)) + bot_delay * 0.2
+                    # Quy tắc: Phong Hậu Cờ Tàn (Premove)
+                    elif ctx.get("is_promotion", False):
+                        reaction_time = 0.01
                         travel_time = 0.02
+                        action_log = "Promotion Premove"
+                    # Quy tắc Tối thượng: Time Scramble (Hard-Override)
+                    elif self.current_time_left <= 5.0:
+                        reaction_time = 0.01
+                        travel_time = 0.01
+                        is_scramble = True
                         action_log = "Scramble"
                     else:
                         # 4 Lớp Màng Lọc Ngữ Cảnh
@@ -300,33 +420,54 @@ class ChessWorker(QThread):
                             action_log = "Hesitation"
                         # Bước 2: Forced/Evasion
                         elif ctx["opponent_captured"]:
-                            reaction_time = random.uniform(0.1, 0.2)
+                            reaction_time = max(0.05, bot_delay * 0.8 + random.gauss(0.05, 0.02))
                             action_log = "Recapture"
                         elif ctx["is_in_check"]:
-                            if ctx["legal_moves_count"] <= 3:
-                                reaction_time = random.uniform(0.1, 0.3)
+                            if self.current_time_left < 15.0:
+                                reaction_time = random.uniform(0.01, 0.05)
+                                action_log = "Scramble Evasion"
+                            elif ctx["legal_moves_count"] <= 3:
+                                hesitation_delay = max(0.0, random.gauss(bot_delay * 0.5, 0.05))
+                                reaction_time = (bot_delay * 0.8) + hesitation_delay
                                 action_log = "Instinct Evasion"
                             else:
-                                reaction_time = random.uniform(0.5, 1.5)
+                                hesitation_delay = max(0.0, random.gauss(bot_delay, 0.1))
+                                reaction_time = (bot_delay * 1.5) + hesitation_delay
                                 action_log = "Calculated Evasion"
-                        # Bước 3: Premove (15% ở Khai cuộc hoặc Tàn cuộc)
-                        elif (ctx["fullmove_number"] <= 5 or ctx["fullmove_number"] > 35) and random.random() < 0.15:
-                            reaction_time = random.uniform(0.01, 0.05)
-                            action_log = "Premove"
+                        # Bước 3: Premove (Khai cuộc <= 4)
+                        elif ctx["fullmove_number"] <= 4:
+                            reaction_time = max(0.01, bot_delay * 0.3 + random.uniform(0.01, 0.05))
+                            action_log = "Opening Premove"
                         # Bước 1: Game Phases (Bình thường)
                         else:
-                            if ctx["fullmove_number"] <= 5:
-                                reaction_time = max(0.01, random.gauss(bot_delay * 0.8, 0.05))
+                            # Phân bổ thời gian dựa trên bot_delay do người dùng cài đặt
+                            if self.current_time_left > 15.0:
+                                variance = random.uniform(0.8, 1.5)
+                                reaction_time = max(0.01, (bot_delay * variance) + random.gauss(0.05, 0.02))
                             else:
-                                reaction_time = max(0.01, random.gauss(bot_delay, 0.05))
-                                # Tactical pause chance ở Trung/Tàn cuộc
-                                if 6 <= ctx["fullmove_number"] <= 35 and random.random() < 0.15:
-                                    reaction_time += random.uniform(0.5, 1.5)
-                                    action_log = "Tactical Pause"
+                                # Scramble (<15s): Ép tốc độ xuống siêu nhanh
+                                reaction_time = max(0.01, (bot_delay * 0.2) + random.uniform(0.01, 0.03))
+                            action_log = "Tactical Move"
 
                     print(f"[ClickWorker] {action_log}! Executing {start_sq}{end_sq} (Reaction: {reaction_time:.2f}s, Travel: {travel_time:.2f}s, Scramble: {is_scramble})")
                     
-                    time.sleep(reaction_time)
+                    enable_human = self.config_data.get("human_mouse", True)
+                    
+                    ctx["is_scramble"] = is_scramble
+                    
+                    if enable_human:
+                        # Tối ưu thời gian: Vừa suy nghĩ vừa rê chuột tới quân cờ cần đi (pre-hovering)
+                        move_start_time = min(reaction_time, 0.15)
+                        sleep_time = reaction_time - move_start_time
+                        
+                        if sleep_time > 0:
+                            time.sleep(sleep_time)
+                        
+                        # Rê chuột tới start_px nhưng chưa click
+                        move_and_click(start_px[0], start_px[1], 0, move_start_time, ctx, move=True, click=False)
+                    else:
+                        time.sleep(reaction_time)
+
                     # Double check again just in case the long reaction time allowed opponent to move
                     with self.engine.lock:
                         current_fen = self.engine.board.fen()
@@ -335,16 +476,34 @@ class ChessWorker(QThread):
                         continue
 
                     # Execute clicks
-                    move_and_click(start_px[0], start_px[1], 0, 0)
-                    move_and_click(end_px[0], end_px[1], 0, travel_time)
+                    if enable_human:
+                        # Chuột đã tới quân cờ rồi, giờ chỉ cần click chọn quân cờ
+                        move_and_click(start_px[0], start_px[1], 0, 0, ctx, move=False, click=True)
+                    else:
+                        # Nếu tắt Human, teleport tới start_sq và click
+                        move_and_click(start_px[0], start_px[1], 0, 0, ctx)
+                    
+                    # Di chuyển chuột tới ô cần đến và click thả quân cờ
+                    move_and_click(end_px[0], end_px[1], 0, travel_time, ctx)
                     
                     self.last_bot_click_time = time.time()
                     self.waiting_for_board_change = True
                     
-                    # Reset chuột về 1 góc để tránh hover tooltip che bàn cờ
+                    # Rút chuột nhẹ ra chỗ khác để tránh hover tooltip che mất tầm nhìn OCR
                     time.sleep(0.05)
-                    ctypes.windll.user32.SetCursorPos(10, 10)
-                    
+                    if enable_human:
+                        offset_x = random.choice([-1.5, 1.5]) * self.capture.sq_width
+                        offset_y = random.choice([-1.5, 1.5]) * self.capture.sq_width
+                        
+                        target_x = max(self.capture.bbox["left"], min(self.capture.bbox["left"] + self.capture.bbox["width"], end_px[0] + offset_x))
+                        target_y = max(self.capture.bbox["top"], min(self.capture.bbox["top"] + self.capture.bbox["height"], end_px[1] + offset_y))
+                        
+                        curvature_val = self.config_data.get("mouse_curvature", 30)
+                        human_move_mouse(target_x, target_y, 0.15, curvature_val)
+                    else:
+                        # Tắt human thì cứ vứt tạm ra rìa bàn cờ
+                        ctypes.windll.user32.SetCursorPos(self.capture.bbox["left"], self.capture.bbox["top"])
+                        
                 except queue.Empty:
                     pass
                 except Exception as e:
@@ -403,7 +562,11 @@ class ChessWorker(QThread):
                     pass
                 
                 # 1. Gọi hàm nhận diện hình ảnh để lấy chuỗi FEN
-                detected_fen = self.capture.image_to_fen(curr_img, turn_to_move=turn_to_move) 
+                detected_fen = self.capture.image_to_fen(
+                    curr_img, 
+                    turn_to_move=turn_to_move, 
+                    fallback_board=self.engine.board
+                ) 
                 print(f"[Debug] image_to_fen returned: {detected_fen}")
                 
                 if detected_fen:
@@ -534,8 +697,8 @@ class ChessWorker(QThread):
             _, thresh = cv2.threshold(gray, 40, 255, cv2.THRESH_BINARY)
             motion_pixels = cv2.countNonZero(thresh)
             
-            # [SỬA ĐỔI 4] Nâng ngưỡng motion_pixels lên 50 để tránh nhiễu li ti
-            if motion_pixels > 50: 
+            # [SỬA ĐỔI 4] Nâng ngưỡng motion_pixels lên 500 để tránh nhiễu từ các icon nhấp nháy (như đồng hồ đỏ báo sắp hết giờ)
+            if motion_pixels > 500: 
                 stable_counter = 0
             else:
                 stable_counter += 1
@@ -581,19 +744,42 @@ class ChessWorker(QThread):
                                 # Ảnh không giống lúc trước khi đi -> Đây chỉ là dư âm của hoạt ảnh!
                                 # Đừng undo, chỉ lọc rác
                                 if changed_squares_stable != last_failed_squares:
-                                    print(f"[Worker] Đã lọc rác/hoạt ảnh lơ lửng sau nước đi: {changed_squares_stable}")
+                                    print(f"[Worker] Đã bỏ qua rác/hoạt ảnh lơ lửng sau nước đi: {changed_squares_stable}")
                                     last_failed_squares = changed_squares_stable
-                                    last_stable_img = curr_img
+                                    # [SỬA LỖI] KHÔNG LƯU last_stable_img TẠI ĐÂY ĐỂ KHÔNG BỊ "NUỐT" NƯỚC ĐI!
                         elif changed_squares_stable != last_failed_squares:
-                            print(f"[Worker] Đã lọc rác/hoạt ảnh lơ lửng: {changed_squares_stable}")
+                            print(f"[Worker] Đã bỏ qua rác/hoạt ảnh lơ lửng: {changed_squares_stable}")
                             last_failed_squares = changed_squares_stable
-                            last_stable_img = curr_img
+                            
+                            # Nếu rác quá lớn (>= 5 ô), gần như chắc chắn là do popup biến mất hoặc màn hình bị cuộn.
+                            # Cần auto-sync ngay lập tức để lấy lại mốc FEN chuẩn, tránh kẹt vĩnh viễn!
+                            if len(changed_squares_stable) >= 5:
+                                print(f"[Worker] ⚠️ Phát hiện thay đổi diện rộng ({len(changed_squares_stable)} ô). Tự động đồng bộ FEN!")
+                                self.request_midgame_sync(turn="auto")
+                                stable_counter = 0
+                                
+                        elif stable_counter > (10 if getattr(self, 'current_time_left', 60) < 15.0 else 45):
+                            print(f"[Worker] ⚠️ Phát hiện bàn cờ bị Desync! Bỏ qua tự động phục hồi để tránh nhận diện nhầm lượt.")
+                            stable_counter = 0
                             
             prev_img = curr_img
                 
     def process_and_emit_top_moves(self):
         """Hỏi Stockfish và đẩy kết quả lên UI"""
-        top_moves = self.engine.get_top_moves(limit=2)
+        import chess
+        
+        # [TỐI ƯU] Không phân tích nước đi của đối thủ để tiết kiệm CPU và tránh lỗi Autoplay nhầm
+        with self.engine.lock:
+            board_turn = self.engine.board.turn
+            
+        if self.capture.player_color == "white" and board_turn == chess.BLACK:
+            self.moves_ready.emit([]) # Xóa UI mũi tên
+            return
+        if self.capture.player_color == "black" and board_turn == chess.WHITE:
+            self.moves_ready.emit([]) # Xóa UI mũi tên
+            return
+            
+        top_moves = self.engine.get_top_moves(limit=2, time_left=getattr(self, 'current_time_left', 60.0))
         
         if not top_moves:
             return
@@ -626,12 +812,19 @@ class ChessWorker(QThread):
             except Exception as e:
                 print(f"[Worker] Lỗi convert tọa độ: {e}")
                 
+        # [TỐI ƯU] Tắt/đóng băng Overlay nếu còn dưới 5s để tập trung 100% CPU cho Auto-Sync và Engine
+        if self.current_time_left < 5.0:
+            ui_data = []
+            
         # Phát tín hiệu an toàn qua thread ranh giới (cross-thread)
         self.moves_ready.emit(ui_data)
         
         # Xử lý Autoplay
         import chess
         if self.config_data.get('autoplay', False) and not self.is_paused and best_m:
+            if getattr(self, 'waiting_for_board_change', False):
+                return  # Đang chờ OpenCV nhận diện cú click trước đó. Tránh spam click!
+                
             is_our_turn = False
             with self.engine.lock:
                 board_turn = self.engine.board.turn
@@ -657,10 +850,11 @@ class ChessWorker(QThread):
                         "is_in_check": self.engine.board.is_check(),
                         "opponent_captured": False,
                         "legal_moves_count": len(list(self.engine.board.legal_moves)),
-                        "score": best_score
+                        "score": best_score,
+                        "is_promotion": len(best_m) == 5,
+                        "is_troll_check": top_moves[0].get("is_troll_check", False) if len(top_moves) > 0 else False
                     }
                     
-                    # Check if opponent's last move was a capture
                     if len(self.engine.board.move_stack) > 0:
                         try:
                             last_move = self.engine.board.peek()
@@ -678,9 +872,35 @@ class ChessWorker(QThread):
                     "end_px": end_px,
                     "decision_fen": decision_fen,
                     "is_scramble": is_scramble,
-                    "context": context
+                    "context": context,
+                    "is_premove_hover": False
                 }
                 self.click_queue.put(click_task)
+            
+            # [TỐI ƯU] Predictive Premove
+            elif not is_our_turn and len(top_moves) > 0 and "forced_premove" in top_moves[0]:
+                premove_data = top_moves[0]["forced_premove"]
+                our_premove = premove_data["our_premove"]
+                
+                start_sq = our_premove[:2]
+                end_sq = our_premove[2:4]
+                start_px = self.square_to_pixel(start_sq)
+                end_px = self.square_to_pixel(end_sq)
+                
+                with self.click_queue.mutex:
+                    self.click_queue.queue.clear()
+                
+                premove_task = {
+                    "start_sq": start_sq,
+                    "end_sq": end_sq,
+                    "start_px": start_px,
+                    "end_px": end_px,
+                    "decision_fen": None,
+                    "is_scramble": self.current_time_left < 15.0,
+                    "context": {"is_premove_hover": True, "expected_opp_move": premove_data["expected_opp_move"]},
+                    "is_premove_hover": True
+                }
+                self.click_queue.put(premove_task)
 
 class ControlPanelUI(QWidget):
     def __init__(self, worker):
@@ -688,7 +908,18 @@ class ControlPanelUI(QWidget):
         self.worker = worker
         self.setWindowTitle("StockEye Control")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.resize(250, 300)
+        
+        # Thiết lập kích thước
+        self.resize(250, 500)
+        
+        # Tự động chuyển cửa sổ sang góc trên cùng bên phải
+        try:
+            desktop_geom = QApplication.desktop().availableGeometry()
+            x = desktop_geom.width() - self.width() - 20
+            y = 20
+            self.move(x, y)
+        except:
+            pass
         
         layout = QVBoxLayout()
         
@@ -741,6 +972,43 @@ class ControlPanelUI(QWidget):
         self.spin_bot_delay.setSingleStep(0.1)
         self.spin_bot_delay.setValue(self.config_data.get("bot_delay", 0.15))
         form_layout.addRow("BOT Delay (s):", self.spin_bot_delay)
+        
+        # Threads (SpinBox)
+        self.spin_threads = QSpinBox()
+        self.spin_threads.setRange(1, 32)
+        self.spin_threads.setValue(self.config_data.get("threads", 2))
+        form_layout.addRow("Threads:", self.spin_threads)
+        
+        # Stable Frames (SpinBox)
+        self.spin_stable = QSpinBox()
+        self.spin_stable.setRange(1, 10)
+        self.spin_stable.setValue(self.config_data.get("stable_frames", 4))
+        form_layout.addRow("Stable Frames:", self.spin_stable)
+        
+        # Trade Bias (SpinBox)
+        self.spin_trade_bias = QSpinBox()
+        self.spin_trade_bias.setRange(0, 1000)
+        self.spin_trade_bias.setSingleStep(10)
+        self.spin_trade_bias.setValue(self.config_data.get("trade_bias", 150))
+        form_layout.addRow("Trade Bias (cp):", self.spin_trade_bias)
+        
+        # BM Threshold (SpinBox)
+        self.spin_bm_thresh = QSpinBox()
+        self.spin_bm_thresh.setRange(0, 10000)
+        self.spin_bm_thresh.setSingleStep(50)
+        self.spin_bm_thresh.setValue(self.config_data.get("bm_threshold", 400))
+        form_layout.addRow("BM Threshold (cp):", self.spin_bm_thresh)
+        
+        # Enable Human Mouse (Checkbox)
+        self.chk_human_mouse = QCheckBox()
+        self.chk_human_mouse.setChecked(self.config_data.get("human_mouse", True))
+        form_layout.addRow("Human Mouse:", self.chk_human_mouse)
+        
+        # Mouse Curvature (SpinBox)
+        self.spin_curvature = QSpinBox()
+        self.spin_curvature.setRange(0, 100)
+        self.spin_curvature.setValue(self.config_data.get("mouse_curvature", 30))
+        form_layout.addRow("Mouse Curvature:", self.spin_curvature)
         
         layout.addLayout(form_layout)
         
@@ -804,6 +1072,8 @@ class ControlPanelUI(QWidget):
         
         self.setLayout(layout)
         
+        self.worker.exit_app_signal.connect(self.close, Qt.QueuedConnection)
+        
         # Cập nhật UI ban đầu
         self.toggle_strength_inputs()
 
@@ -821,6 +1091,12 @@ class ControlPanelUI(QWidget):
         self.config_data["human_error_rate"] = self.spin_error.value()
         self.config_data["time_limit"] = round(self.spin_time.value(), 2)
         self.config_data["bot_delay"] = round(self.spin_bot_delay.value(), 2)
+        self.config_data["threads"] = self.spin_threads.value()
+        self.config_data["stable_frames"] = self.spin_stable.value()
+        self.config_data["trade_bias"] = self.spin_trade_bias.value()
+        self.config_data["bm_threshold"] = self.spin_bm_thresh.value()
+        self.config_data["human_mouse"] = self.chk_human_mouse.isChecked()
+        self.config_data["mouse_curvature"] = self.spin_curvature.value()
         try:
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config_data, f, indent=4)

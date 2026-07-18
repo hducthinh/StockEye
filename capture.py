@@ -69,16 +69,22 @@ class BoardCapture:
             text = pytesseract.image_to_string(thresh, config='--psm 7 -c tessedit_char_whitelist=0123456789:.,')
             text = text.strip().replace(',', '.')
             
-            # Parse mm:ss or ss.s
-            if ':' in text:
-                parts = text.split(':')
-                if len(parts) >= 2:
-                    m = int(re.sub(r'[^0-9]', '', parts[0]) or 0)
-                    s = float(re.sub(r'[^0-9.]', '', parts[1]) or 0)
-                    return float(m * 60 + s)
-            else:
-                val = float(re.sub(r'[^0-9.]', '', text))
-                return val
+            # Tìm định dạng mm:ss hoặc mm:ss.s
+            match_colon = re.search(r'(\d+):(\d{2}(?:\.\d+)?)', text)
+            if match_colon:
+                m = int(match_colon.group(1))
+                s = float(match_colon.group(2))
+                return float(m * 60 + s)
+                
+            # Tìm định dạng ss.s (khi < 10s)
+            match_dot = re.search(r'(\d+\.\d+)', text)
+            if match_dot:
+                return float(match_dot.group(1))
+                
+            # Trúng garbage (ví dụ Elo: 2800 45) -> Lấy số cuối cùng
+            nums = re.findall(r'\d+', text)
+            if nums:
+                return float(nums[-1])
         except Exception:
             # Nếu nhòe hoặc lỗi format, return None để clock_worker giữ lại giá trị cũ
             return None
@@ -109,7 +115,11 @@ class BoardCapture:
         """
         Tự động nhận diện màu quân bằng cách so sánh độ sáng trung bình của
         hàng quân trên cùng và hàng quân dưới cùng.
+        Chỉ hoạt động chính xác ở thế cờ xuất phát.
         """
+        if not self.is_start_position_fast(img):
+            return getattr(self, "player_color", "white")
+            
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
         # Cắt lấy hàng trên cùng và hàng dưới cùng
@@ -161,14 +171,23 @@ class BoardCapture:
                 x2 = int((col + 1) * self.sq_width)
                 y2 = int((row + 1) * self.sq_height)
                 
-                # Cắt vùng ảnh nhị phân của ô này
-                square_thresh = thresh[y1:y2, x1:x2]
+                # ROI Culling: Cắt bỏ 15% viền ngoài của mỗi ô
+                margin_x = int((x2 - x1) * 0.15)
+                margin_y = int((y2 - y1) * 0.15)
+                
+                x1_core = x1 + margin_x
+                x2_core = x2 - margin_x
+                y1_core = y1 + margin_y
+                y2_core = y2 - margin_y
+                
+                # Cắt vùng ảnh nhị phân của lõi ô cờ
+                square_thresh = thresh[y1_core:y2_core, x1_core:x2_core]
                 
                 # Đếm số pixel bị thay đổi (màu trắng)
                 intersect_area = cv2.countNonZero(square_thresh)
-                square_area = (x2 - x1) * (y2 - y1)
+                square_area = (x2_core - x1_core) * (y2_core - y1_core)
                 
-                crop_gray = gray[y1:y2, x1:x2]
+                crop_gray = gray[y1_core:y2_core, x1_core:x2_core]
                 if intersect_area > 0:
                     max_diff = np.max(crop_gray[square_thresh > 0])
                 else:
@@ -196,7 +215,7 @@ class BoardCapture:
         changed_squares_data.sort(key=lambda x: x['max_diff'], reverse=True)
         return [sq['name'] for sq in changed_squares_data]
 
-    def image_to_fen(self, img, turn_to_move=None):
+    def image_to_fen(self, img, turn_to_move=None, fallback_board=None):
         import glob
         import os
         import cv2
@@ -231,6 +250,9 @@ class BoardCapture:
         # Tự động nhận diện góc nhìn bàn cờ 1 lần
         board_orientation = self.auto_detect_color(img)
 
+        import chess
+        fen_to_type = {v: k for k, v in fen_map.items()}
+
         # Lặp qua 64 ô cờ trên ảnh
         for row in range(8):
             for col in range(8):
@@ -241,37 +263,85 @@ class BoardCapture:
                 
                 square_img = img[y1:y2, x1:x2]
                 
+                actual_row = 7 - row if board_orientation == "black" else row
+                actual_col = 7 - col if board_orientation == "black" else col
+                
                 best_match_val = 0
                 best_match_piece = ''
                 
-                for piece_type, tpl_list in templates.items():
-                    for tpl in tpl_list:
-                        if tpl.shape[2] == 4:
-                            mask = tpl[:, :, 3]
-                            tpl_color = tpl[:, :, :3]
-                            if tpl_color.shape[0] > square_img.shape[0] or tpl_color.shape[1] > square_img.shape[1]:
-                                continue
-                            result = cv2.matchTemplate(square_img, tpl_color, cv2.TM_CCORR_NORMED, mask=mask)
-                        else:
-                            if tpl.shape[0] > square_img.shape[0] or tpl.shape[1] > square_img.shape[1]:
-                                continue
-                            result = cv2.matchTemplate(square_img, tpl, cv2.TM_CCOEFF_NORMED)
-                            
-                        _, max_val, _, _ = cv2.minMaxLoc(result)
-                        if max_val > best_match_val:
-                            best_match_val = max_val
-                            best_match_piece = fen_map[piece_type]
+                # --- TỐI ƯU HOÁ TỐC ĐỘ (SUPER FAST SYNC) ---
+                # Nếu có fallback_board, ta kiểm tra quân cờ cũ tại ô này trước. 
+                # Nếu nó khớp > 75%, ta bỏ qua việc quét 11 loại quân còn lại!
+                skip_others = False
+                if fallback_board:
+                    sq = (7 - actual_row) * 8 + actual_col
+                    p = fallback_board.piece_at(sq)
+                    if p:
+                        expected_char = p.symbol()
+                        expected_type = fen_to_type.get(expected_char)
+                        if expected_type and expected_type in templates:
+                            for tpl in templates[expected_type]:
+                                if tpl.shape[2] == 4:
+                                    mask = tpl[:, :, 3]
+                                    tpl_color = tpl[:, :, :3]
+                                    if tpl_color.shape[0] > square_img.shape[0] or tpl_color.shape[1] > square_img.shape[1]: continue
+                                    res = cv2.matchTemplate(square_img, tpl_color, cv2.TM_CCORR_NORMED, mask=mask)
+                                else:
+                                    if tpl.shape[0] > square_img.shape[0] or tpl.shape[1] > square_img.shape[1]: continue
+                                    res = cv2.matchTemplate(square_img, tpl, cv2.TM_CCOEFF_NORMED)
+                                _, max_val, _, _ = cv2.minMaxLoc(res)
+                                if max_val > 0.75:
+                                    best_match_val = max_val
+                                    best_match_piece = expected_char
+                                    skip_others = True
+                                    break
+                
+                if not skip_others:
+                    for piece_type, tpl_list in templates.items():
+                        for tpl in tpl_list:
+                            if tpl.shape[2] == 4:
+                                mask = tpl[:, :, 3]
+                                tpl_color = tpl[:, :, :3]
+                                if tpl_color.shape[0] > square_img.shape[0] or tpl_color.shape[1] > square_img.shape[1]:
+                                    continue
+                                result = cv2.matchTemplate(square_img, tpl_color, cv2.TM_CCORR_NORMED, mask=mask)
+                            else:
+                                if tpl.shape[0] > square_img.shape[0] or tpl.shape[1] > square_img.shape[1]:
+                                    continue
+                                result = cv2.matchTemplate(square_img, tpl, cv2.TM_CCOEFF_NORMED)
+                                
+                            _, max_val, _, _ = cv2.minMaxLoc(result)
+                            if max_val > best_match_val:
+                                best_match_val = max_val
+                                best_match_piece = fen_map[piece_type]
                             
                 # Ngưỡng chấp nhận (có thể cần tinh chỉnh tuỳ ảnh mẫu của người dùng)
                 if best_match_val > 0.55:
-                    if board_orientation == "black":
-                        actual_row = 7 - row
-                        actual_col = 7 - col
-                    else:
-                        actual_row = row
-                        actual_col = col
-                        
                     board[actual_row][actual_col] = best_match_piece
+
+        # --- RECOVERY TỐI THƯỢNG ---
+        # Trong cờ vua, Vua không bao giờ bị ăn. 
+        # Nếu thiếu Vua, chắc chắn là do OpenCV bị nhiễu (chuột đè lên, viền đỏ, v.v.).
+        # Ta sẽ dùng fallback_board (bàn cờ chuẩn trước đó) để nhét Vua lại đúng vị trí!
+        if fallback_board:
+            import chess
+            
+            has_wk = any('K' in r for r in board)
+            has_bk = any('k' in r for r in board)
+            
+            if not has_wk:
+                wk_sq = fallback_board.king(chess.WHITE)
+                if wk_sq is not None:
+                    r = 7 - (wk_sq // 8)
+                    c = wk_sq % 8
+                    board[r][c] = 'K'
+                    
+            if not has_bk:
+                bk_sq = fallback_board.king(chess.BLACK)
+                if bk_sq is not None:
+                    r = 7 - (bk_sq // 8)
+                    c = bk_sq % 8
+                    board[r][c] = 'k'
 
         fen_rows = []
         for row in range(8):
@@ -310,6 +380,15 @@ class BoardCapture:
             
         if not castling:
             castling = "-"
+            
+        # Hardcode: Nếu là thế cờ xuất phát chuẩn, LƯỢT ĐI LUÔN LÀ CỦA TRẮNG (w)
+        # Bất kể turn_to_move là gì (ngăn chặn lỗi Auto-Sync đánh nhầm lượt cho phe Đen)
+        start_fen_w = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"
+        start_fen_b = "RNBQKBNR/PPPPPPPP/8/8/8/8/pppppppp/rnbqkbnr" # Góc nhìn từ phe Đen (Mặc dù Chess.com luôn xoay lại, nhưng cứ an toàn)
+        
+        if fen_board == start_fen_w or fen_board == start_fen_b:
+            turn = 'w'
+            castling = "KQkq"
             
         # Mặc định không bắt tốt qua đường (En Passant) khi resync giữa ván vì thiếu lịch sử
         fen_full = f"{fen_board} {turn} {castling} - 0 1"
