@@ -322,7 +322,11 @@ class ChessEngine:
                             
                         pov_score = result.info["score"].pov(board_copy.turn)
                         if pov_score.is_mate():
-                            sort_val = 100000 - abs(pov_score.mate())
+                            m_val = pov_score.mate()
+                            if m_val > 0:
+                                sort_val = 100000 - m_val
+                            else:
+                                sort_val = -100000 - m_val
                         else:
                             sort_val = pov_score.score()
                     
@@ -375,7 +379,11 @@ class ChessEngine:
                         pov_score = entry["score"].pov(board_copy.turn)
                         sort_val = 0
                         if pov_score.is_mate():
-                            sort_val = 100000 - abs(pov_score.mate())
+                            m_val = pov_score.mate()
+                            if m_val > 0:
+                                sort_val = 100000 - m_val
+                            else:
+                                sort_val = -100000 - m_val
                         else:
                             sort_val = pov_score.score()
                             
@@ -426,7 +434,11 @@ class ChessEngine:
                                         
                                     cap_pov = entry["score"].pov(board_copy.turn)
                                     if cap_pov.is_mate():
-                                        cap_sort = 100000 - abs(cap_pov.mate())
+                                        cap_m_val = cap_pov.mate()
+                                        if cap_m_val > 0:
+                                            cap_sort = 100000 - cap_m_val
+                                        else:
+                                            cap_sort = -100000 - cap_m_val
                                     else:
                                         cap_sort = cap_pov.score()
                                         
@@ -495,8 +507,11 @@ class ChessEngine:
                     top_moves.pop(1)
                     print(f"[Engine] 🎭 Smart Human Error: Đã chọn nước top {selected_idx+1} thay thế!")
                 else:
-                    top_moves.pop(0)
-                    print("[Engine] 🎭 Kích hoạt Human Error: Đang hiển thị nước Inaccuracy thay thế!")
+                    if top_moves[1]["sort_val"] > -300:
+                        top_moves.pop(0)
+                        print("[Engine] 🎭 Kích hoạt Human Error: Đang hiển thị nước Inaccuracy thay thế!")
+                    else:
+                        print("[Engine] 🎭 Hủy Human Error vì các nước thay thế đều là Blunder chí mạng!")
             # [TỐI ƯU] Predictive Premove Check
             if len(top_moves) > 0 and len(top_moves[0].get("pv", [])) >= 3:
                 pv = top_moves[0]["pv"]
