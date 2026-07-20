@@ -11,7 +11,7 @@ class OverlayUI(QWidget):
     def __init__(self):
         super().__init__()
         
-        # Lấy thông số cấu hình phe
+        # Load phe người chơi
         self.player_color = "white"
         if os.path.exists("config.json"):
             try:
@@ -20,11 +20,11 @@ class OverlayUI(QWidget):
             except:
                 pass
                 
-        # Cấu hình cửa sổ Overlay
+        # Thiết lập cửa sổ Overlay
         self.setWindowFlags(
-            Qt.FramelessWindowHint |      # Không viền
+            Qt.FramelessWindowHint |      # Bỏ viền
             Qt.WindowStaysOnTopHint |     # Luôn nổi trên cùng
-            Qt.WindowTransparentForInput |# Xuyên chuột (Click-through)
+            Qt.WindowTransparentForInput |# Không chặn click chuột (Click-through)
             Qt.Tool                       # Ẩn khỏi Taskbar
         )
         # Nền trong suốt

@@ -25,7 +25,6 @@ class BoardCapture:
                 pass
 
     def select_roi(self, force_reselect=False):
-        """Đọc vùng bàn cờ từ file config.json"""
         import json, os
         if os.path.exists("config.json"):
             try:
@@ -35,16 +34,16 @@ class BoardCapture:
                         self.bbox = config["bbox"]
                         self.sq_width = self.bbox["width"] / 8.0
                         self.sq_height = self.bbox["height"] / 8.0
-                        print(f"Đã tải vùng bàn cờ từ config.json: {self.bbox}")
+                        print(f"Loaded bbox: {self.bbox}")
                     if "clock_region" in config:
                         self.clock_region = config["clock_region"]
-                        print(f"Đã tải vùng đồng hồ từ config.json: {self.clock_region}")
+                        print(f"Loaded clock_region: {self.clock_region}")
                     if self.bbox:
                         return
-            except:
-                pass
+            except Exception as e:
+                print("Exception loading config:", e)
                 
-        raise ValueError("Chưa đo vùng bàn cờ! Vui lòng chạy `python measure_board.py` trước khi chạy main.py!")
+        raise ValueError("No bbox found!")
 
     def get_board_image(self):
         """Chụp và trả về ảnh vùng bàn cờ hiện tại"""
@@ -65,7 +64,7 @@ class BoardCapture:
             # Thresholding to make text clear
             _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
             
-            # OCR specifically for digits and time separators
+            # OCR đặc tả chữ số và dấu phân cách thời gian
             text = pytesseract.image_to_string(thresh, config='--psm 7 -c tessedit_char_whitelist=0123456789:.,')
             text = text.strip().replace(',', '.')
             
@@ -81,12 +80,12 @@ class BoardCapture:
             if match_dot:
                 return float(match_dot.group(1))
                 
-            # Trúng garbage (ví dụ Elo: 2800 45) -> Lấy số cuối cùng
+            # Lọc số nguyên cuối cùng để tránh rác OCR
             nums = re.findall(r'\d+', text)
             if nums:
                 return float(nums[-1])
         except Exception:
-            # Nếu nhòe hoặc lỗi format, return None để clock_worker giữ lại giá trị cũ
+            # Giữ giá trị cũ nếu OCR lỗi
             return None
             
         return None
@@ -99,13 +98,13 @@ class BoardCapture:
         col = max(0, min(7, col))
         row = max(0, min(7, row))
         
-        # Chuyển đổi thành tọa độ bàn cờ dựa vào phe
+        # Chuyển Pixel sang tọa độ bàn cờ
         if self.player_color == "black":
-            # Nếu là quân Đen, góc trái trên là h1, góc phải dưới là a8
+            # Đen: Top-Left là h1, Bottom-Right là a8
             file_char = chr(ord('h') - col)
             rank_char = str(row + 1)
         else:
-            # Nếu là quân Trắng, góc trái trên là a8, góc phải dưới là h1
+            # Trắng: Top-Left là a8, Bottom-Right là h1
             file_char = chr(ord('a') + col)
             rank_char = str(8 - row)
             
@@ -122,11 +121,11 @@ class BoardCapture:
             
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # Cắt lấy hàng trên cùng và hàng dưới cùng
+        # Trích xuất hàng trên và dưới cùng
         top_row_roi = gray[0 : int(self.sq_height), :]
         bottom_row_roi = gray[int(7 * self.sq_height) : int(8 * self.sq_height), :]
         
-        # Bỏ đi 25% lề trên dưới để tập trung vào tâm ô cờ (nơi chứa quân)
+        # Cắt lề 25% để tập trung vào tâm ô cờ
         margin_y = int(self.sq_height * 0.25)
         top_row_center = top_row_roi[margin_y : int(self.sq_height) - margin_y, :]
         bottom_row_center = bottom_row_roi[margin_y : int(self.sq_height) - margin_y, :]
@@ -134,8 +133,8 @@ class BoardCapture:
         top_brightness = np.mean(top_row_center)
         bottom_brightness = np.mean(bottom_row_center)
         
-        # Quân trắng sáng hơn quân đen. Background 2 hàng giống hệt nhau (4 sáng, 4 tối)
-        # Nên nếu hàng dưới sáng hơn hàng trên -> Hàng dưới là quân Trắng -> Người chơi cầm Trắng
+        # So sánh độ sáng để phân biệt phe
+        # Hàng dưới sáng hơn -> Người chơi cầm Trắng
         if bottom_brightness > top_brightness:
             return "white"
         else:
@@ -149,12 +148,11 @@ class BoardCapture:
         # 1. So sánh sự khác biệt tuyệt đối
         diff = cv2.absdiff(prev_img, curr_img)
         
-        # 2. Lấy chênh lệch lớn nhất ở bất kỳ kênh màu nào (B, G hoặc R)
-        # Không dùng BGR2GRAY vì kênh Blue bị nhân hệ số rất nhỏ (0.114),
-        # trong khi màu highlight của chess.com chủ yếu thay đổi mạnh ở kênh Blue!
+        # Lấy chênh lệch màu lớn nhất giữa 3 kênh RGB
+        # Giữ nguyên RGB vì highlight của Chess.com rất đậm màu Blue
         gray = np.max(diff, axis=2).astype(np.uint8)
-        # [SỬA ĐỔI 1] Nâng ngưỡng threshold từ 5 lên 40. 
-        # Triệt tiêu hoàn toàn nhiễu do nén video và highlight mờ nhạt.
+        # Ngưỡng threshold 40 để lọc nhiễu 
+        # Triệt tiêu nhiễu video và highlight mờ
         _, thresh = cv2.threshold(gray, 40, 255, cv2.THRESH_BINARY)
         
         changed_squares_data = []
@@ -171,7 +169,7 @@ class BoardCapture:
                 x2 = int((col + 1) * self.sq_width)
                 y2 = int((row + 1) * self.sq_height)
                 
-                # ROI Culling: Cắt bỏ 15% viền ngoài của mỗi ô
+                # Cắt viền 15% của ô cờ để tập trung vùng lõi
                 margin_x = int((x2 - x1) * 0.15)
                 margin_y = int((y2 - y1) * 0.15)
                 
@@ -193,7 +191,7 @@ class BoardCapture:
                 else:
                     max_diff = 0
                 
-                # [Sửa lỗi] Kết hợp AND và nâng diện tích lên 15% (0.15) để lọc trỏ chuột
+                # Ngưỡng diện tích 15% để lọc trỏ chuột
                 if intersect_area > 0.15 * square_area and max_diff > 50:
                         
                     # Chuyển đổi row, col sang toạ độ cờ
@@ -210,8 +208,8 @@ class BoardCapture:
                         "max_diff": max_diff
                     })
                     
-        # Sắp xếp theo ĐỘ MẠNH của sự thay đổi màu sắc (max_diff) thay vì diện tích
-        # Quân cờ biến mất/xuất hiện luôn tạo ra chênh lệch màu lớn hơn (max_diff > 150) so với Highlight (max_diff < 110)
+        # Ưu tiên theo cường độ thay đổi màu (max_diff)
+        # Quân cờ có chênh lệch màu lớn hơn Highlight
         changed_squares_data.sort(key=lambda x: x['max_diff'], reverse=True)
         return [sq['name'] for sq in changed_squares_data]
 
@@ -247,7 +245,7 @@ class BoardCapture:
 
         board = [['' for _ in range(8)] for _ in range(8)]
         
-        # Tự động nhận diện góc nhìn bàn cờ 1 lần
+        # Xác định góc nhìn bàn cờ
         board_orientation = self.auto_detect_color(img)
 
         import chess
@@ -269,9 +267,9 @@ class BoardCapture:
                 best_match_val = 0
                 best_match_piece = ''
                 
-                # --- TỐI ƯU HOÁ TỐC ĐỘ (SUPER FAST SYNC) ---
-                # Nếu có fallback_board, ta kiểm tra quân cờ cũ tại ô này trước. 
-                # Nếu nó khớp > 75%, ta bỏ qua việc quét 11 loại quân còn lại!
+                # Tối ưu hóa đối chiếu template
+                # Ưu tiên kiểm tra quân cờ cũ từ fallback_board 
+                # Nếu khớp > 75%, bỏ qua quét các quân khác
                 skip_others = False
                 if fallback_board:
                     sq = (7 - actual_row) * 8 + actual_col
@@ -315,14 +313,14 @@ class BoardCapture:
                                 best_match_val = max_val
                                 best_match_piece = fen_map[piece_type]
                             
-                # Ngưỡng chấp nhận (có thể cần tinh chỉnh tuỳ ảnh mẫu của người dùng)
+                # Ngưỡng template matching
                 if best_match_val > 0.55:
                     board[actual_row][actual_col] = best_match_piece
 
         # --- RECOVERY TỐI THƯỢNG ---
-        # Trong cờ vua, Vua không bao giờ bị ăn. 
-        # Nếu thiếu Vua, chắc chắn là do OpenCV bị nhiễu (chuột đè lên, viền đỏ, v.v.).
-        # Ta sẽ dùng fallback_board (bàn cờ chuẩn trước đó) để nhét Vua lại đúng vị trí!
+        # Khôi phục Vua bị lỗi do nhiễu 
+        # Thiếu Vua thường do nhiễu OpenCV
+        # Dùng fallback_board để khôi phục Vua
         if fallback_board:
             import chess
             
@@ -367,13 +365,13 @@ class BoardCapture:
         else:
             turn = turn_to_move
             
-        # Khôi phục quyền nhập thành dựa trên vị trí hiện tại của Vua và Xe
+        # Khôi phục trạng thái nhập thành
         castling = ""
-        # Trắng: Vua ở e1 (board[7][4]), Xe h1 (board[7][7]), Xe a1 (board[7][0])
+        # Trắng: e1 (Vua), h1 (Xe), a1 (Xe)
         if board[7][4] == 'K':
             if board[7][7] == 'R': castling += "K"
             if board[7][0] == 'R': castling += "Q"
-        # Đen: Vua ở e8 (board[0][4]), Xe h8 (board[0][7]), Xe a8 (board[0][0])
+        # Đen: e8 (Vua), h8 (Xe), a8 (Xe)
         if board[0][4] == 'k':
             if board[0][7] == 'r': castling += "k"
             if board[0][0] == 'r': castling += "q"
@@ -381,16 +379,16 @@ class BoardCapture:
         if not castling:
             castling = "-"
             
-        # Hardcode: Nếu là thế cờ xuất phát chuẩn, LƯỢT ĐI LUÔN LÀ CỦA TRẮNG (w)
-        # Bất kể turn_to_move là gì (ngăn chặn lỗi Auto-Sync đánh nhầm lượt cho phe Đen)
+        # Thế cờ mặc định: Lượt của Trắng
+        # Ngăn chặn đánh nhầm lượt lúc mới vào game
         start_fen_w = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"
-        start_fen_b = "RNBQKBNR/PPPPPPPP/8/8/8/8/pppppppp/rnbqkbnr" # Góc nhìn từ phe Đen (Mặc dù Chess.com luôn xoay lại, nhưng cứ an toàn)
+        start_fen_b = "RNBQKBNR/PPPPPPPP/8/8/8/8/pppppppp/rnbqkbnr" # FEN xuất phát góc nhìn Đen
         
         if fen_board == start_fen_w or fen_board == start_fen_b:
             turn = 'w'
             castling = "KQkq"
             
-        # Mặc định không bắt tốt qua đường (En Passant) khi resync giữa ván vì thiếu lịch sử
+        # Bỏ qua En Passant khi resync vì thiếu lịch sử
         fen_full = f"{fen_board} {turn} {castling} - 0 1"
         
         return fen_full
@@ -448,6 +446,10 @@ class BoardCapture:
         y2_r2 = int(7 * row_height)
         rank2_img = img[y1_r2:y2_r2, :]
         
+        y1_r4 = int(3 * row_height)
+        y2_r4 = int(4 * row_height)
+        rank4_img = img[y1_r4:y2_r4, :]
+        
         def get_edges(roi):
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             edges = cv2.Canny(gray, 50, 150)
@@ -455,12 +457,11 @@ class BoardCapture:
             
         edge7 = get_edges(rank7_img)
         edge2 = get_edges(rank2_img)
+        edge4 = get_edges(rank4_img)
         
-        # Ngưỡng động dựa trên kích thước bàn cờ (tránh lỗi khi bàn cờ to/nhỏ)
-        # Đường ranh giới dọc giữa 8 ô cờ có 7 đường x row_height. 
-        # Nếu có 8 quân tốt, số lượng cạnh sẽ tăng thêm rất nhiều (thường > 15 * row_height)
-        threshold = 10 * row_height 
-        
-        if edge7 > threshold and edge2 > threshold:
+        # Vị trí xuất phát: Hàng 2, 7 có quân, hàng 4 trống
+        # So sánh cạnh để xác thực khởi đầu ván
+        # Phát hiện Midgame qua cấu trúc hàng
+        if edge7 > edge4 * 2 and edge2 > edge4 * 2:
             return True
         return False
