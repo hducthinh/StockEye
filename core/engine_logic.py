@@ -285,7 +285,11 @@ class ChessEngine:
             with self.lock:
                 board_copy = self.board.copy()
                 
-            if self.config.get("uci_limit_strength"):
+            is_limit_strength = self.config.get("uci_limit_strength")
+            if is_limit_strength and time_left <= 5.0:
+                is_limit_strength = False
+                
+            if is_limit_strength:
                 top_moves = []
                 banned_moves = set()
                 

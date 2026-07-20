@@ -763,7 +763,7 @@ class ChessWorker(QThread):
                 # Quy tắc: Phong Hậu Cờ Tàn (Premove)
                 elif ctx.get("is_promotion", False):
                     reaction_time = 0.01
-                    travel_time = 0.02
+                    travel_time = 0.05
                     action_log = "Promotion Premove"
                 # Quy tắc Tối thượng: Time Scramble (Hard-Override)
                 elif self.current_time_left <= scramble_time:
