@@ -123,13 +123,7 @@ class ControlPanelUI(QWidget):
         self.spin_trade_bias.setValue(self.config_data.get("trade_bias", 150))
         adv_layout.addRow("Xu hướng đổi quân:", self.spin_trade_bias)
         
-        # BM Threshold (cp)
-        self.spin_bm_thresh = QSpinBox()
-        self.spin_bm_thresh.setRange(0, 10000)
-        self.spin_bm_thresh.setSingleStep(50)
-        self.spin_bm_thresh.setValue(self.config_data.get("bm_threshold", 400))
-        adv_layout.addRow("Troll đối thủ khi giá trị lợi thế >=", self.spin_bm_thresh)
-        
+
         # Mouse Curvature
         self.spin_curvature = QSpinBox()
         self.spin_curvature.setRange(0, 100)
@@ -219,7 +213,6 @@ class ControlPanelUI(QWidget):
         self.spin_threads.valueChanged.connect(self.save_config)
         self.spin_stable.valueChanged.connect(self.save_config)
         self.spin_trade_bias.valueChanged.connect(self.save_config)
-        self.spin_bm_thresh.valueChanged.connect(self.save_config)
         self.spin_curvature.valueChanged.connect(self.save_config)
         self.spin_scramble.valueChanged.connect(self.save_config)
         
@@ -294,7 +287,6 @@ class ControlPanelUI(QWidget):
         self.config_data["threads"] = self.spin_threads.value()
         self.config_data["stable_frames"] = self.spin_stable.value()
         self.config_data["trade_bias"] = self.spin_trade_bias.value()
-        self.config_data["bm_threshold"] = self.spin_bm_thresh.value()
         self.config_data["mouse_curvature"] = self.spin_curvature.value()
         self.config_data["scramble_time"] = round(self.spin_scramble.value(), 1)
         self.config_data["preset_index"] = self.combo_preset.currentIndex()

@@ -328,14 +328,10 @@ class ChessEngine:
                         else:
                             sort_val = pov_score.score()
                     
-                    # Chế độ BM (Ăn quân tuyệt đối): Nếu lợi thế >= BM Threshold, ưu tiên ăn quân hơn cả Mate
                     # Nếu chưa lợi thế, cộng Trade Bias để khuyến khích trao đổi quân
-                    bm_thresh = self.config.get("bm_threshold", 400)
                     trade_b = self.config.get("trade_bias", 150)
                     if is_capture:
-                        if sort_val >= bm_thresh:
-                            sort_val += 200000
-                        elif sort_val > 0:
+                        if sort_val > 0:
                             sort_val += trade_b
                             
                     pv_list = []

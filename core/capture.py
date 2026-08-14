@@ -401,7 +401,7 @@ class BoardCapture:
 
         if not hasattr(self, '_new_game_templates'):
             self._new_game_templates = []
-            for path in glob.glob("templates/ui/*.png"):
+            for path in glob.glob("templates/newgame*.png"):
                 if os.path.exists(path):
                     tpl = cv2.imread(path, cv2.IMREAD_COLOR)
                     if tpl is not None:
