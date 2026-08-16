@@ -14,6 +14,7 @@ class ChessWorker(QThread):
     autofarm_ui_signal = pyqtSignal(bool)
     suggest_ui_signal = pyqtSignal(bool)
     exit_app_signal = pyqtSignal()
+    force_side_ui_signal = pyqtSignal(str)
 
     def __init__(self, capture, engine, mouse_controller):
         super().__init__()
@@ -64,6 +65,8 @@ class ChessWorker(QThread):
         
         self.auto_farm = False
         keyboard.on_press_key("4", lambda _: self.toggle_autofarm())
+        keyboard.on_press_key("5", lambda _: self.force_side_ui_signal.emit("white"))
+        keyboard.on_press_key("6", lambda _: self.force_side_ui_signal.emit("black"))
         keyboard.on_press_key("f4", lambda _: self.exit_app_signal.emit())
 
     def toggle_autofarm(self):
@@ -195,7 +198,11 @@ class ChessWorker(QThread):
                 
                 # Tự động nhận diện màu quân cờ hiện tại
                 try:
-                    detected_color = self.capture.auto_detect_color(curr_img)
+                    if self.config_data.get("force_side_enabled", False):
+                        detected_color = self.config_data.get("force_side", "white")
+                    else:
+                        detected_color = self.capture.auto_detect_color(curr_img)
+                        
                     self.capture.player_color = detected_color
                     
                     if turn_to_move in ["auto", "auto_suggest"]:
@@ -459,7 +466,7 @@ class ChessWorker(QThread):
             self.moves_ready.emit([])
             return
             
-        top_moves = self.engine.get_top_moves(limit=2, time_left=getattr(self, 'current_time_left', 60.0))
+        top_moves = self.engine.get_top_moves(limit=4, time_left=getattr(self, 'current_time_left', 60.0))
         
         if not top_moves:
             return

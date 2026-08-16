@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QGridLayout, QPushButton, QCheckBox, QSpinBox, QDoubleSpinBox, QFormLayout, QLabel, QTabWidget, QComboBox
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QGridLayout, QPushButton, QCheckBox, QSpinBox, QDoubleSpinBox, QFormLayout, QLabel, QTabWidget, QComboBox, QHBoxLayout, QRadioButton, QButtonGroup
 from PyQt5.QtCore import Qt, QTimer
 import sys
 
@@ -7,7 +7,7 @@ class ControlPanelUI(QWidget):
         super().__init__()
         self.worker = worker
         self.setWindowTitle("StockEye Control")
-        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         
         # Thiết lập kích thước
         self.resize(360, 600)
@@ -28,6 +28,8 @@ class ControlPanelUI(QWidget):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(15)
         
+
+        
         self.tabs = QTabWidget()
         
         # --- TAB CƠ BẢN ---
@@ -46,6 +48,41 @@ class ControlPanelUI(QWidget):
         self.combo_preset.currentIndexChanged.connect(self.apply_preset)
         
         basic_layout.addRow("Chế độ chơi:", self.combo_preset)
+        
+        # Cưỡng ép phe hiện tại
+        side_layout = QHBoxLayout()
+        self.chk_force_side = QCheckBox("BÊN HIỆN TẠI:")
+        self.chk_force_side.setChecked(self.config_data.get("force_side_enabled", False))
+        
+        self.radio_white = QRadioButton("[5] TRẮNG")
+        self.radio_black = QRadioButton("[6] ĐEN")
+        
+        self.side_group = QButtonGroup()
+        self.side_group.addButton(self.radio_white)
+        self.side_group.addButton(self.radio_black)
+        
+        if self.config_data.get("force_side", "white") == "black":
+            self.radio_black.setChecked(True)
+        else:
+            self.radio_white.setChecked(True)
+            
+        def on_force_side_toggle():
+            is_enabled = self.chk_force_side.isChecked()
+            self.radio_white.setEnabled(is_enabled)
+            self.radio_black.setEnabled(is_enabled)
+            
+        self.chk_force_side.stateChanged.connect(on_force_side_toggle)
+        self.chk_force_side.stateChanged.connect(self.save_config)
+        self.radio_white.toggled.connect(self.save_config)
+        self.radio_black.toggled.connect(self.save_config)
+        
+        side_layout.addWidget(self.chk_force_side)
+        side_layout.addWidget(self.radio_white)
+        side_layout.addWidget(self.radio_black)
+        side_layout.addStretch()
+        
+        basic_layout.addRow(side_layout)
+        on_force_side_toggle()
         
         # Trình độ Bot (Elo)
         self.spin_elo = QSpinBox()
@@ -191,6 +228,7 @@ class ControlPanelUI(QWidget):
         
         self.setLayout(main_layout)
         self.worker.exit_app_signal.connect(self.close, Qt.QueuedConnection)
+        self.worker.force_side_ui_signal.connect(self.on_force_side_hotkey, Qt.QueuedConnection)
         
         # Cập nhật UI ban đầu
         self.toggle_strength_inputs()
@@ -290,6 +328,8 @@ class ControlPanelUI(QWidget):
         self.config_data["mouse_curvature"] = self.spin_curvature.value()
         self.config_data["scramble_time"] = round(self.spin_scramble.value(), 1)
         self.config_data["preset_index"] = self.combo_preset.currentIndex()
+        self.config_data["force_side_enabled"] = self.chk_force_side.isChecked()
+        self.config_data["force_side"] = "black" if self.radio_black.isChecked() else "white"
         try:
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config_data, f, indent=4)
@@ -327,3 +367,14 @@ class ControlPanelUI(QWidget):
         print("\n[UI] Bảng điều khiển đã bị đóng. Đang thoát chương trình...")
         QApplication.instance().quit()
         event.accept()
+
+    def on_force_side_hotkey(self, side):
+        self.chk_force_side.setChecked(True)
+        if side == "white":
+            self.radio_white.setChecked(True)
+        else:
+            self.radio_black.setChecked(True)
+        self.save_config()
+        # Buộc đồng bộ lại màu sau khi ép phe
+        mode = "auto" if self.config_data.get("autoplay", False) else "auto_suggest"
+        self.worker.request_midgame_sync(mode)

@@ -63,11 +63,15 @@ class OverlayUI(QWidget):
         for i, move in enumerate(self.moves_to_draw):
             start_pt, end_pt, score = move
             
-            # Màu sắc: Top 1 (Xanh lá đậm), Top 2 & 3 (Cam nhạt hơn)
+            # Màu sắc theo thứ hạng:
             if i == 0:
-                color = QColor(0, 255, 0, 200) # Green, alpha=200
+                color = QColor(0, 255, 0, 200) # Green, alpha=200 - Best Move
+            elif i == 1:
+                color = QColor(0, 191, 255, 200) # DeepSkyBlue, alpha=200 - Strong Alternative
+            elif i == 2:
+                color = QColor(255, 215, 0, 180) # Gold/Yellow, alpha=180 - Acceptable / Interesting
             else:
-                color = QColor(255, 165, 0, 150) # Orange, alpha=150
+                color = QColor(255, 0, 0, 180) # Red, alpha=180 - Bad / Blunder Risk
                 
             pen = QPen(color, 6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
             painter.setPen(pen)
