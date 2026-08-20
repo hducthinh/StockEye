@@ -228,8 +228,8 @@ class ChessWorker(QThread):
                     # Đồng bộ màu phe để vẽ UI chính xác
                     self.config_data["player_color"] = "white" if turn_to_move == 'w' else "black"
                     self.capture.player_color = self.config_data["player_color"]
-                except:
-                    pass
+                except Exception as e:
+                    print(f"[!] Lỗi khi tự nhận diện màu: {e}")
                 
                 # 1. Gọi hàm nhận diện hình ảnh để lấy chuỗi FEN
                 detected_fen = self.capture.image_to_fen(

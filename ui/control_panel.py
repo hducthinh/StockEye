@@ -38,18 +38,9 @@ class ControlPanelUI(QWidget):
         basic_layout.setContentsMargins(10, 15, 10, 10)
         basic_layout.setSpacing(15)
         
-        self.preset_is_updating = False
+
         
-        # Chế độ chơi (Presets)
-        self.combo_preset = QComboBox()
-        self.combo_preset.addItems(["Cờ siêu chớp (1 Phút)", "Cờ chớp (3 Phút)", "Cờ nhanh (10 Phút)", "Tùy chỉnh"])
-        preset_idx = self.config_data.get("preset_index", 3)
-        self.combo_preset.setCurrentIndex(preset_idx)
-        self.combo_preset.currentIndexChanged.connect(self.apply_preset)
-        
-        basic_layout.addRow("Chế độ chơi:", self.combo_preset)
-        
-        # Cưỡng ép phe hiện tại
+        # Cưỡng ép phe hiện tại (giữ lại theo yêu cầu)
         side_layout = QHBoxLayout()
         self.chk_force_side = QCheckBox("BÊN HIỆN TẠI:")
         self.chk_force_side.setChecked(self.config_data.get("force_side_enabled", False))
@@ -66,15 +57,22 @@ class ControlPanelUI(QWidget):
         else:
             self.radio_white.setChecked(True)
             
-        def on_force_side_toggle():
+        def on_force_side_changed():
             is_enabled = self.chk_force_side.isChecked()
             self.radio_white.setEnabled(is_enabled)
             self.radio_black.setEnabled(is_enabled)
             
-        self.chk_force_side.stateChanged.connect(on_force_side_toggle)
-        self.chk_force_side.stateChanged.connect(self.save_config)
-        self.radio_white.toggled.connect(self.save_config)
-        self.radio_black.toggled.connect(self.save_config)
+            # Lưu ngay lập tức vào bộ nhớ (không cần đợi Lưu Settings)
+            self.config_data["force_side_enabled"] = is_enabled
+            self.config_data["force_side"] = "black" if self.radio_black.isChecked() else "white"
+            
+            # Gửi tín hiệu quét lại
+            mode = "auto" if self.config_data.get("autoplay", False) else "auto_suggest"
+            self.worker.request_midgame_sync(turn=mode)
+            
+        self.chk_force_side.stateChanged.connect(on_force_side_changed)
+        self.radio_white.clicked.connect(on_force_side_changed)
+        self.radio_black.clicked.connect(on_force_side_changed)
         
         side_layout.addWidget(self.chk_force_side)
         side_layout.addWidget(self.radio_white)
@@ -82,7 +80,13 @@ class ControlPanelUI(QWidget):
         side_layout.addStretch()
         
         basic_layout.addRow(side_layout)
-        on_force_side_toggle()
+        
+        # Cập nhật state UI ban đầu mà không trigger event
+        self.chk_force_side.blockSignals(True)
+        is_enabled = self.chk_force_side.isChecked()
+        self.radio_white.setEnabled(is_enabled)
+        self.radio_black.setEnabled(is_enabled)
+        self.chk_force_side.blockSignals(False)
         
         # Trình độ Bot (Elo)
         self.spin_elo = QSpinBox()
@@ -227,7 +231,6 @@ class ControlPanelUI(QWidget):
         main_layout.addLayout(grid_layout)
         
         self.setLayout(main_layout)
-        self.worker.exit_app_signal.connect(self.close, Qt.QueuedConnection)
         self.worker.force_side_ui_signal.connect(self.on_force_side_hotkey, Qt.QueuedConnection)
         
         # Cập nhật UI ban đầu
@@ -236,55 +239,13 @@ class ControlPanelUI(QWidget):
         # Kết nối tất cả các sự kiện thay đổi để tự động lưu ngay lập tức
         self.connect_signals_to_save()
         
-        # Áp dụng preset nếu đang chọn (phải gọi sau khi tạo xong UI)
-        if self.combo_preset.currentIndex() != 3:
-            self.apply_preset(self.combo_preset.currentIndex())
+
 
     def connect_signals_to_save(self):
-        # Checkboxes
-        self.chk_limit_strength.stateChanged.connect(self.save_config)
-        # SpinBoxes
-        self.spin_elo.valueChanged.connect(self.save_config)
-        self.spin_error.valueChanged.connect(self.save_config)
-        self.spin_time.valueChanged.connect(self.save_config)
-        self.spin_bot_delay.valueChanged.connect(self.save_config)
-        self.spin_threads.valueChanged.connect(self.save_config)
-        self.spin_stable.valueChanged.connect(self.save_config)
-        self.spin_trade_bias.valueChanged.connect(self.save_config)
-        self.spin_curvature.valueChanged.connect(self.save_config)
-        self.spin_scramble.valueChanged.connect(self.save_config)
+        # Tắt tính năng auto save
+        pass
         
-        # Tự động nhảy sang "Tùy chỉnh" nếu người dùng tự kéo số
-        def on_custom_change():
-            if not self.preset_is_updating:
-                self.preset_is_updating = True
-                self.combo_preset.setCurrentIndex(3)
-                self.preset_is_updating = False
-        
-        self.spin_bot_delay.valueChanged.connect(on_custom_change)
-        self.spin_error.valueChanged.connect(on_custom_change)
-        self.spin_time.valueChanged.connect(on_custom_change)
 
-    def apply_preset(self, index):
-        if self.preset_is_updating: return
-        self.preset_is_updating = True
-        
-        if index == 0: # Cờ siêu chớp (1 Phút)
-            self.spin_bot_delay.setValue(1.2)
-            self.spin_error.setValue(15)
-            self.spin_time.setValue(0.05)
-        elif index == 1: # Cờ chớp (3 Phút)
-            self.spin_bot_delay.setValue(3.5)
-            self.spin_error.setValue(10)
-            self.spin_time.setValue(0.1)
-        elif index == 2: # Cờ nhanh (10 Phút)
-            self.spin_bot_delay.setValue(10.0)
-            self.spin_error.setValue(5)
-            self.spin_time.setValue(0.2)
-            
-        self.preset_is_updating = False
-        if index != 3:
-            self.save_config()
 
     def update_toggle_btn_style(self):
         if self.worker.is_paused:
@@ -326,8 +287,7 @@ class ControlPanelUI(QWidget):
         self.config_data["stable_frames"] = self.spin_stable.value()
         self.config_data["trade_bias"] = self.spin_trade_bias.value()
         self.config_data["mouse_curvature"] = self.spin_curvature.value()
-        self.config_data["scramble_time"] = round(self.spin_scramble.value(), 1)
-        self.config_data["preset_index"] = self.combo_preset.currentIndex()
+        self.config_data["autoplay"] = self.chk_autoplay.isChecked()
         self.config_data["force_side_enabled"] = self.chk_force_side.isChecked()
         self.config_data["force_side"] = "black" if self.radio_black.isChecked() else "white"
         try:
@@ -362,19 +322,17 @@ class ControlPanelUI(QWidget):
             mode = "auto" if self.config_data.get("autoplay", False) else "auto_suggest"
             self.worker.request_midgame_sync(mode)
 
-    def closeEvent(self, event):
-        """Thoát chương trình khi đóng cửa sổ"""
-        print("\n[UI] Bảng điều khiển đã bị đóng. Đang thoát chương trình...")
-        QApplication.instance().quit()
-        event.accept()
-
     def on_force_side_hotkey(self, side):
         self.chk_force_side.setChecked(True)
         if side == "white":
             self.radio_white.setChecked(True)
         else:
             self.radio_black.setChecked(True)
-        self.save_config()
-        # Buộc đồng bộ lại màu sau khi ép phe
-        mode = "auto" if self.config_data.get("autoplay", False) else "auto_suggest"
-        self.worker.request_midgame_sync(mode)
+        
+        # Sẽ tự kích hoạt on_force_side_changed() vì kết nối tín hiệu
+        
+    def closeEvent(self, event):
+        """Thoát chương trình khi đóng cửa sổ"""
+        print("\n[UI] Bảng điều khiển đã bị đóng. Đang thoát chương trình...")
+        QApplication.instance().quit()
+        event.accept()

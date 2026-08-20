@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import mss
 import time
-from capture import BoardCapture
+from core.capture import BoardCapture
 
 def main():
     print("=========================================")
@@ -17,6 +17,8 @@ def main():
     print("4. Góc nhìn của bạn có thể là Trắng hoặc Đen (Tool sẽ tự nhận diện).")
     print("=========================================")
     input("Nhấn Enter để bắt đầu...")
+    print("Đang chờ 2 giây...")
+    time.sleep(2)
 
     print("\n=== BƯỚC 2: TRÍCH XUẤT ẢNH MẪU TỰ ĐỘNG ===")
 

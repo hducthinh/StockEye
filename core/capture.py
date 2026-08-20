@@ -235,6 +235,12 @@ class BoardCapture:
             if piece_type in fen_map:
                 tpl = cv2.imread(path, cv2.IMREAD_UNCHANGED)
                 if tpl is not None:
+                    # Resize template to match the cropped size (70% of square size)
+                    target_w = int(self.sq_width * 0.7)
+                    target_h = int(self.sq_height * 0.7)
+                    if target_w > 0 and target_h > 0:
+                        tpl = cv2.resize(tpl, (target_w, target_h), interpolation=cv2.INTER_AREA)
+                    
                     if piece_type not in templates:
                         templates[piece_type] = []
                     templates[piece_type].append(tpl)
