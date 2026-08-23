@@ -284,7 +284,7 @@ class ControlPanelUI(QWidget):
         self.preset_is_updating = True
         
         if index == 0: # Cờ siêu chớp (1 Phút)
-            self.spin_bot_delay.setValue(1.2)
+            self.spin_bot_delay.setValue(0.6)
             self.spin_error.setValue(15)
             self.spin_time.setValue(0.05)
         elif index == 1: # Cờ chớp (3 Phút)
