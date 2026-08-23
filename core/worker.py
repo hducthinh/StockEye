@@ -119,7 +119,6 @@ class ChessWorker(QThread):
                 return
 
         if new_state:
-            self.config_data["human_mouse"] = True
             self.request_midgame_sync(turn="auto")
         else:
             self.config_data["autoplay"] = False
@@ -397,6 +396,15 @@ class ChessWorker(QThread):
                         # Đã áp dụng xong, ẩn cảnh báo cũ đi
                         last_failed_squares = None
                     else:
+                        # Thay đổi diện rộng (>= 5 ô) thường do reset ván mới, popup hoặc cuộn trang
+                        # Auto-sync để lấy lại FEN chuẩn
+                        if len(changed_squares_stable) >= 5:
+                            print(f"[Worker] ⚠️ Phát hiện thay đổi diện rộng ({len(changed_squares_stable)} ô). Tự động đồng bộ FEN (New Game)!")
+                            mode = "auto" if self.config_data.get("autoplay", False) else "auto_suggest"
+                            self.request_midgame_sync(turn=mode)
+                            stable_counter = 0
+                            continue
+                            
                         # Kiểm tra thao tác nhấc và thả quân về chỗ cũ (Hover Cancel)
                         is_potential_cancel = self.engine.is_potential_hover_cancel(changed_squares_stable)
                         
@@ -424,14 +432,7 @@ class ChessWorker(QThread):
                         elif changed_squares_stable != last_failed_squares:
                             print(f"[Worker] Đã bỏ qua rác/hoạt ảnh lơ lửng: {changed_squares_stable}")
                             last_failed_squares = changed_squares_stable
-                            
-                            # Thay đổi diện rộng (>= 5 ô) thường do popup hoặc cuộn trang
-                            # Auto-sync để lấy lại FEN chuẩn
-                            if len(changed_squares_stable) >= 5:
-                                print(f"[Worker] ⚠️ Phát hiện thay đổi diện rộng ({len(changed_squares_stable)} ô). Tự động đồng bộ FEN!")
-                                mode = "auto" if self.config_data.get("autoplay", False) else "auto_suggest"
-                                self.request_midgame_sync(turn=mode)
-                                stable_counter = 0
+
                                 
                         elif stable_counter > (10 if getattr(self, 'current_time_left', 60) < 15.0 else 45):
                             if not self.config_data.get('autoplay', False):

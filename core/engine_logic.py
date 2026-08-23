@@ -328,11 +328,7 @@ class ChessEngine:
                         else:
                             sort_val = pov_score.score()
                     
-                    # Nếu chưa lợi thế, cộng Trade Bias để khuyến khích trao đổi quân
-                    trade_b = self.config.get("trade_bias", 150)
-                    if is_capture:
-                        if sort_val > 0:
-                            sort_val += trade_b
+
                             
                     pv_list = []
                     if result.info and "pv" in result.info:

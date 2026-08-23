@@ -3,9 +3,10 @@ from PyQt5.QtCore import Qt, QTimer
 import sys
 
 class ControlPanelUI(QWidget):
-    def __init__(self, worker):
+    def __init__(self, worker, share_board=None):
         super().__init__()
         self.worker = worker
+        self.share_board = share_board
         self.setWindowTitle("StockEye Control")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         
@@ -114,6 +115,28 @@ class ControlPanelUI(QWidget):
         lbl_delay.setToolTip(self.spin_bot_delay.toolTip())
         basic_layout.addRow(lbl_delay, self.spin_bot_delay)
         
+        # Share Screen Board (Bàn cờ phụ)
+        self.chk_share_board = QCheckBox()
+        self.chk_share_board.setChecked(self.config_data.get("show_share_board", False))
+        if self.share_board:
+            self.share_board.setVisible(self.chk_share_board.isChecked())
+        def on_share_board_toggle(state):
+            is_checked = state == Qt.Checked
+            if self.share_board:
+                self.share_board.setVisible(is_checked)
+        self.chk_share_board.stateChanged.connect(on_share_board_toggle)
+        basic_layout.addRow("Bàn cờ phụ (Share Screen):", self.chk_share_board)
+        # Human Mouse (Giả lập chuột)
+        self.chk_human_mouse = QCheckBox()
+        self.chk_human_mouse.setChecked(self.config_data.get("human_mouse", True))
+        basic_layout.addRow("Giả lập chuột con người:", self.chk_human_mouse)
+        
+        # Limit Strength (Checkbox)
+        self.config_data["uci_limit_strength"] = True
+        self.chk_limit_strength = QCheckBox()
+        self.chk_limit_strength.setChecked(True)
+        basic_layout.addRow("Giới hạn sức mạnh:", self.chk_limit_strength)
+        
         self.tab_basic.setLayout(basic_layout)
         self.tabs.addTab(self.tab_basic, "Cơ Bản")
         
@@ -127,12 +150,7 @@ class ControlPanelUI(QWidget):
         self.chk_autoplay = QCheckBox()
         self.chk_autoplay.setChecked(self.config_data.get("autoplay", False))
         self.worker.autoplay_ui_signal.connect(self.chk_autoplay.setChecked, Qt.QueuedConnection)
-        
-        # Limit Strength (Checkbox)
-        self.config_data["uci_limit_strength"] = True
-        self.chk_limit_strength = QCheckBox()
-        self.chk_limit_strength.setChecked(True)
-        adv_layout.addRow("Giới hạn sức mạnh:", self.chk_limit_strength)
+
         
         # Time Limit (s)
         self.spin_time = QDoubleSpinBox()
@@ -153,13 +171,7 @@ class ControlPanelUI(QWidget):
         self.spin_stable.setValue(self.config_data.get("stable_frames", 4))
         adv_layout.addRow("Khung hình chờ ổn định:", self.spin_stable)
         
-        # Trade Bias (cp)
-        self.spin_trade_bias = QSpinBox()
-        self.spin_trade_bias.setRange(0, 1000)
-        self.spin_trade_bias.setSingleStep(10)
-        self.spin_trade_bias.setValue(self.config_data.get("trade_bias", 150))
-        adv_layout.addRow("Xu hướng đổi quân:", self.spin_trade_bias)
-        
+
 
         # Mouse Curvature
         self.spin_curvature = QSpinBox()
@@ -243,6 +255,7 @@ class ControlPanelUI(QWidget):
     def connect_signals_to_save(self):
         # Checkboxes
         self.chk_limit_strength.stateChanged.connect(self.save_config)
+        self.chk_share_board.stateChanged.connect(self.save_config)
         # SpinBoxes
         self.spin_elo.valueChanged.connect(self.save_config)
         self.spin_error.valueChanged.connect(self.save_config)
@@ -250,7 +263,8 @@ class ControlPanelUI(QWidget):
         self.spin_bot_delay.valueChanged.connect(self.save_config)
         self.spin_threads.valueChanged.connect(self.save_config)
         self.spin_stable.valueChanged.connect(self.save_config)
-        self.spin_trade_bias.valueChanged.connect(self.save_config)
+        self.chk_human_mouse.stateChanged.connect(self.save_config)
+
         self.spin_curvature.valueChanged.connect(self.save_config)
         self.spin_scramble.valueChanged.connect(self.save_config)
         
@@ -324,12 +338,14 @@ class ControlPanelUI(QWidget):
         self.config_data["bot_delay"] = round(self.spin_bot_delay.value(), 2)
         self.config_data["threads"] = self.spin_threads.value()
         self.config_data["stable_frames"] = self.spin_stable.value()
-        self.config_data["trade_bias"] = self.spin_trade_bias.value()
+        self.config_data["human_mouse"] = self.chk_human_mouse.isChecked()
+
         self.config_data["mouse_curvature"] = self.spin_curvature.value()
         self.config_data["scramble_time"] = round(self.spin_scramble.value(), 1)
         self.config_data["preset_index"] = self.combo_preset.currentIndex()
         self.config_data["force_side_enabled"] = self.chk_force_side.isChecked()
         self.config_data["force_side"] = "black" if self.radio_black.isChecked() else "white"
+        self.config_data["show_share_board"] = self.chk_share_board.isChecked()
         try:
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config_data, f, indent=4)
@@ -365,6 +381,8 @@ class ControlPanelUI(QWidget):
     def closeEvent(self, event):
         """Thoát chương trình khi đóng cửa sổ"""
         print("\n[UI] Bảng điều khiển đã bị đóng. Đang thoát chương trình...")
+        if self.share_board:
+            self.share_board.close()
         QApplication.instance().quit()
         event.accept()
 

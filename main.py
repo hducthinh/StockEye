@@ -52,11 +52,15 @@ def main():
     overlay = OverlayUI()
     overlay.show()
     
-    control_panel = ControlPanelUI(worker)
+    from ui.share_board import ShareableBoardUI
+    share_board = ShareableBoardUI(capture)
+    
+    control_panel = ControlPanelUI(worker, share_board=share_board)
     control_panel.show()
     
     # Kết nối các tín hiệu (signals) giữa Worker và UI
     worker.moves_ready.connect(overlay.update_moves, Qt.QueuedConnection)
+    worker.moves_ready.connect(share_board.update_moves, Qt.QueuedConnection)
     worker.exit_app_signal.connect(control_panel.close, Qt.QueuedConnection)
     worker.toggle_pause_signal.connect(control_panel.toggle_tool, Qt.QueuedConnection)
     
