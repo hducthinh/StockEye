@@ -1,5 +1,12 @@
 import sys
 import signal
+
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QTimer, Qt
 
@@ -64,7 +71,13 @@ def main():
     worker.exit_app_signal.connect(control_panel.close, Qt.QueuedConnection)
     worker.toggle_pause_signal.connect(control_panel.toggle_tool, Qt.QueuedConnection)
     
+    # Khởi tạo bộ điều khiển Stealth Mode (F10 Boss Key)
+    from core.stealth import StealthController
+    stealth_controller = StealthController(worker, control_panel, overlay, share_board=share_board)
+    worker.toggle_stealth_signal.connect(stealth_controller.toggle_stealth, Qt.QueuedConnection)
+    
     print("\n[System] Phần mềm đã sẵn sàng. Hãy bấm [1] BẬT / TẮT hoặc dùng Control Panel để bắt đầu.")
+    print("[System] Phím tắt [F10]: ẨN / HIỆN TOÀN BỘ TOOL (Stealth Mode: Ẩn màn hình, Taskbar & Task Manager - Ngụy trang chrome.exe).")
     
     exit_code = app.exec_()
     

@@ -32,8 +32,37 @@ class ChessEngine:
             print(f"[Engine] CẢNH BÁO: Không tìm thấy Stockfish tại {engine_path}")
             self.engine = None
         else:
-            print("[Engine] Đang khởi động Stockfish...")
-            self.engine = chess.engine.SimpleEngine.popen_uci(engine_path)
+            # Ngụy trang tên tiến trình Stockfish trong Task Manager (mặc định: chrome.exe)
+            disguise_name = self.config.get("engine_disguise_name", "chrome.exe")
+            target_engine_path = engine_path
+            if disguise_name:
+                try:
+                    engine_dir = os.path.dirname(engine_path) or "."
+                    disguised_file = os.path.join(engine_dir, disguise_name)
+                    need_create = False
+                    if not os.path.exists(disguised_file):
+                        need_create = True
+                    elif os.path.getsize(disguised_file) != os.path.getsize(engine_path):
+                        try:
+                            os.remove(disguised_file)
+                        except Exception:
+                            pass
+                        need_create = True
+                    
+                    if need_create:
+                        try:
+                            os.link(engine_path, disguised_file)
+                        except Exception:
+                            import shutil
+                            shutil.copy2(engine_path, disguised_file)
+                    
+                    if os.path.exists(disguised_file):
+                        target_engine_path = disguised_file
+                except Exception as e:
+                    print(f"[Engine] Không thể ngụy trang tiến trình: {e}")
+
+            print(f"[Engine] Đang khởi động Engine ({os.path.basename(target_engine_path)})...")
+            self.engine = chess.engine.SimpleEngine.popen_uci(target_engine_path)
             
             # Load cấu hình Stockfish
             self.apply_config_to_engine()
@@ -267,13 +296,16 @@ class ChessEngine:
         # Override nếu thời gian đang rất thấp (Scramble Mode)
         engine_time_limit = self.config["time_limit"]
         is_human_error = False
+        is_autoplay = self.config.get("autoplay", False)
         
+        # Tiết kiệm CPU: Khi bật Autoplay, luôn lấy 1 nước đi (ngoại trừ khi có human error)
+        if is_autoplay:
+            limit = 1
+            
         if time_left <= 5.0:
             engine_time_limit = 0.01
-            limit = 1
         elif time_left <= 15.0:
             engine_time_limit = min(0.05, engine_time_limit)
-            limit = 1
         else:
             is_human_error = random.random() < human_error_rate
         

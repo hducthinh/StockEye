@@ -15,6 +15,7 @@ class ChessWorker(QThread):
     suggest_ui_signal = pyqtSignal(bool)
     exit_app_signal = pyqtSignal()
     force_side_ui_signal = pyqtSignal(str)
+    toggle_stealth_signal = pyqtSignal()
 
     def __init__(self, capture, engine, mouse_controller):
         super().__init__()
@@ -25,6 +26,7 @@ class ChessWorker(QThread):
         self.manual_move_request = None
         self.midgame_sync_request = False
         self.is_paused = True
+        self.is_stealth_active = False
         
         self.analysis_queue = queue.Queue()
         self.click_queue = queue.Queue()
@@ -68,6 +70,17 @@ class ChessWorker(QThread):
         keyboard.on_press_key("5", lambda _: self.force_side_ui_signal.emit("white"))
         keyboard.on_press_key("6", lambda _: self.force_side_ui_signal.emit("black"))
         keyboard.on_press_key("f4", lambda _: self.exit_app_signal.emit())
+
+        # [F10] Boss Key / Stealth Mode (Ẩn toàn bộ tool, Taskbar, Task Manager)
+        self.last_f10_time = 0
+        def on_f10(_):
+            now = time.time()
+            if now - self.last_f10_time < 0.4:
+                return
+            self.last_f10_time = now
+            self.toggle_stealth_signal.emit()
+
+        keyboard.on_press_key("f10", on_f10)
 
     def toggle_autofarm(self):
         new_state = not getattr(self, 'auto_farm', False)
@@ -500,9 +513,7 @@ class ChessWorker(QThread):
             except Exception as e:
                 print(f"[Worker] Lỗi convert tọa độ: {e}")
                 
-        # Tắt Overlay khi < 5s để dồn CPU cho Engine
-        if self.current_time_left < 5.0:
-            ui_data = []
+        # (Đã xóa logic giới hạn mũi tên khi tàn sát)
             
         # Phát tín hiệu an toàn qua thread ranh giới (cross-thread)
         self.moves_ready.emit(ui_data)

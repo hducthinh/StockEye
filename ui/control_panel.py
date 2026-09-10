@@ -137,6 +137,13 @@ class ControlPanelUI(QWidget):
         self.chk_limit_strength.setChecked(True)
         basic_layout.addRow("Giới hạn sức mạnh:", self.chk_limit_strength)
         
+        # Scramble Time
+        self.spin_scramble = QDoubleSpinBox()
+        self.spin_scramble.setRange(1.0, 30.0)
+        self.spin_scramble.setSingleStep(1.0)
+        self.spin_scramble.setValue(self.config_data.get("scramble_time", 5.0))
+        basic_layout.addRow("Thời gian bắt đầu tàn sát (s):", self.spin_scramble)
+        
         self.tab_basic.setLayout(basic_layout)
         self.tabs.addTab(self.tab_basic, "Cơ Bản")
         
@@ -179,12 +186,7 @@ class ControlPanelUI(QWidget):
         self.spin_curvature.setValue(self.config_data.get("mouse_curvature", 30))
         adv_layout.addRow("Độ cong chuột:", self.spin_curvature)
         
-        # Scramble Time
-        self.spin_scramble = QDoubleSpinBox()
-        self.spin_scramble.setRange(1.0, 30.0)
-        self.spin_scramble.setSingleStep(1.0)
-        self.spin_scramble.setValue(self.config_data.get("scramble_time", 5.0))
-        adv_layout.addRow("Thời gian bắt đầu tàn sát (s):", self.spin_scramble)
+
         
         self.tab_adv.setLayout(adv_layout)
         self.tabs.addTab(self.tab_adv, "Nâng Cao")
@@ -235,6 +237,12 @@ class ControlPanelUI(QWidget):
         self.btn_autofarm.clicked.connect(on_autofarm_click)
         self.worker.autofarm_ui_signal.connect(self.update_autofarm_btn_style, Qt.QueuedConnection)
         grid_layout.addWidget(self.btn_autofarm, 1, 1)
+        
+        # [F10] Nút Ẩn Tool (Stealth Mode / Boss Key)
+        self.btn_stealth = QPushButton()
+        self.update_stealth_btn_style(False)
+        self.btn_stealth.clicked.connect(lambda: self.worker.toggle_stealth_signal.emit())
+        grid_layout.addWidget(self.btn_stealth, 2, 0, 1, 2)
         
         main_layout.addLayout(grid_layout)
         
@@ -322,6 +330,14 @@ class ControlPanelUI(QWidget):
         state = "BẬT" if is_on else "TẮT"
         self.btn_autofarm.setText(f"[4] AUTOFARM: {state}")
         self.btn_autofarm.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 10px;")
+
+    def update_stealth_btn_style(self, is_stealth):
+        if is_stealth:
+            self.btn_stealth.setText("[F10] ĐANG ẨN (BẤM F10 ĐỂ HIỆN)")
+            self.btn_stealth.setStyleSheet("background-color: #D32F2F; color: white; font-weight: bold; padding: 8px;")
+        else:
+            self.btn_stealth.setText("[F10] ẨN TOOL (STEALTH MODE)")
+            self.btn_stealth.setStyleSheet("background-color: #37474F; color: white; font-weight: bold; padding: 8px;")
 
     def toggle_strength_inputs(self):
         is_checked = self.chk_limit_strength.isChecked()
