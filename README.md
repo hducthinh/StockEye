@@ -1,5 +1,5 @@
 # 👁️‍🗨️ StockEye - The Ultimate Real-time Chess Assistant & Autobot
-
+ hi
 ![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
 ![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green.svg)
 ![PyQt](https://img.shields.io/badge/PyQt-5%2F6-red.svg)
