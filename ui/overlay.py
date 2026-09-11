@@ -11,12 +11,15 @@ class OverlayUI(QWidget):
     def __init__(self):
         super().__init__()
         
-        # Load phe người chơi
+        # Load phe người chơi và cài đặt vẽ lên màn hình chính
         self.player_color = "white"
+        self.draw_on_main_board = False
         if os.path.exists("config.json"):
             try:
                 with open("config.json", "r", encoding="utf-8") as f:
-                    self.player_color = json.load(f).get("player_color", "white").lower()
+                    cfg = json.load(f)
+                    self.player_color = cfg.get("player_color", "white").lower()
+                    self.draw_on_main_board = cfg.get("draw_on_main_board", False)
             except:
                 pass
                 
@@ -47,14 +50,27 @@ class OverlayUI(QWidget):
         # Format: [((start_x, start_y), (end_x, end_y), score), ...]
         self.moves_to_draw = []
 
+    def set_draw_on_main_board(self, enabled):
+        """Bật/tắt vẽ mũi tên lên màn hình chính từ Control Panel"""
+        self.draw_on_main_board = enabled
+        if not enabled:
+            self.moves_to_draw = []
+            self.update()
+
     def update_moves(self, moves):
         """Hàm này được gọi từ Signal của Worker Thread để cập nhật data và vẽ lại"""
+        if not self.draw_on_main_board:
+            if self.moves_to_draw:
+                self.moves_to_draw = []
+                self.update()
+            return
+            
         self.moves_to_draw = moves
         self.update() # Kích hoạt hàm paintEvent()
 
     def paintEvent(self, event):
         """Hàm vẽ của PyQt, được gọi mỗi khi cần cập nhật màn hình"""
-        if not self.moves_to_draw:
+        if not self.draw_on_main_board or not self.moves_to_draw:
             return
             
         painter = QPainter(self)

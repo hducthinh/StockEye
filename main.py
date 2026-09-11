@@ -1,9 +1,26 @@
 import sys
+import os
 import signal
 
-if hasattr(sys.stdout, 'reconfigure'):
+# Bảo vệ an toàn khi chạy chế độ không có terminal (--noconsole / GUI app)
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w', encoding='utf-8')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w', encoding='utf-8')
+
+if hasattr(sys.stdout, 'reconfigure') and sys.stdout is not None:
     try:
         sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
+# Ẩn hoàn toàn cửa sổ terminal nếu chạy từ file exe đóng gói
+if getattr(sys, 'frozen', False):
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)
     except Exception:
         pass
 
@@ -61,8 +78,10 @@ def main():
     
     from ui.share_board import ShareableBoardUI
     share_board = ShareableBoardUI(capture)
+    if worker.config_data.get("show_share_board", True):
+        share_board.show()
     
-    control_panel = ControlPanelUI(worker, share_board=share_board)
+    control_panel = ControlPanelUI(worker, share_board=share_board, overlay=overlay)
     control_panel.show()
     
     # Kết nối các tín hiệu (signals) giữa Worker và UI

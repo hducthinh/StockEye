@@ -1,17 +1,22 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QGridLayout, QPushButton, QCheckBox, QSpinBox, QDoubleSpinBox, QFormLayout, QLabel, QTabWidget, QComboBox, QHBoxLayout, QRadioButton, QButtonGroup
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QGridLayout, QPushButton, QCheckBox, 
+    QSpinBox, QDoubleSpinBox, QFormLayout, QLabel, QTabWidget, QComboBox, 
+    QHBoxLayout, QRadioButton, QButtonGroup, QScrollArea, QFrame
+)
 from PyQt5.QtCore import Qt, QTimer
 import sys
 
 class ControlPanelUI(QWidget):
-    def __init__(self, worker, share_board=None):
+    def __init__(self, worker, share_board=None, overlay=None):
         super().__init__()
         self.worker = worker
         self.share_board = share_board
+        self.overlay = overlay
         self.setWindowTitle("StockEye Control")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         
-        # Thiết lập kích thước
-        self.resize(360, 600)
+        # Thiết lập kích thước nhỏ gọn
+        self.resize(320, 290)
         
         # Đưa cửa sổ lên góc phải trên màn hình
         try:
@@ -26,31 +31,44 @@ class ControlPanelUI(QWidget):
         self.config_data = self.worker.config_data
 
         main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(15)
-        
-
+        main_layout.setContentsMargins(10, 6, 10, 6)
+        main_layout.setSpacing(6)
         
         self.tabs = QTabWidget()
         
         # --- TAB CƠ BẢN ---
         self.tab_basic = QWidget()
         basic_layout = QFormLayout()
-        basic_layout.setContentsMargins(10, 15, 10, 10)
-        basic_layout.setSpacing(15)
+        basic_layout.setContentsMargins(12, 8, 12, 4)
+        basic_layout.setSpacing(8)
         
-        self.preset_is_updating = False
-        
-        # Chế độ chơi (Presets)
-        self.combo_preset = QComboBox()
-        self.combo_preset.addItems(["Cờ siêu chớp (1 Phút)", "Cờ chớp (3 Phút)", "Cờ nhanh (10 Phút)", "Tùy chỉnh"])
-        preset_idx = self.config_data.get("preset_index", 3)
-        self.combo_preset.setCurrentIndex(preset_idx)
-        self.combo_preset.currentIndexChanged.connect(self.apply_preset)
-        
-        basic_layout.addRow("Chế độ chơi:", self.combo_preset)
-        
-        # Cưỡng ép phe hiện tại
+        # 1. Bàn cờ phụ
+        self.chk_share_board = QCheckBox()
+        self.chk_share_board.setChecked(self.config_data.get("show_share_board", True))
+        if self.share_board:
+            self.share_board.setVisible(self.chk_share_board.isChecked())
+            if hasattr(self.share_board, "visibility_changed"):
+                self.share_board.visibility_changed.connect(
+                    lambda visible: self.chk_share_board.setChecked(visible) if self.chk_share_board.isChecked() != visible else None
+                )
+        def on_share_board_toggle(state):
+            is_checked = state == Qt.Checked
+            if self.share_board:
+                self.share_board.setVisible(is_checked)
+        self.chk_share_board.stateChanged.connect(on_share_board_toggle)
+        basic_layout.addRow("Bàn cờ phụ:", self.chk_share_board)
+
+        # 2. Gợi ý (Bàn cờ chính)
+        self.chk_draw_main = QCheckBox()
+        self.chk_draw_main.setChecked(self.config_data.get("draw_on_main_board", False))
+        def on_draw_main_toggle(state):
+            is_checked = state == Qt.Checked
+            if self.overlay and hasattr(self.overlay, "set_draw_on_main_board"):
+                self.overlay.set_draw_on_main_board(is_checked)
+        self.chk_draw_main.stateChanged.connect(on_draw_main_toggle)
+        basic_layout.addRow("Gợi ý (Bàn cờ chính):", self.chk_draw_main)
+
+        # 3. Cưỡng ép phe hiện tại (Bên hiện tại)
         side_layout = QHBoxLayout()
         self.chk_force_side = QCheckBox("BÊN HIỆN TẠI:")
         self.chk_force_side.setChecked(self.config_data.get("force_side_enabled", False))
@@ -84,15 +102,42 @@ class ControlPanelUI(QWidget):
         
         basic_layout.addRow(side_layout)
         on_force_side_toggle()
+
+        # 4. Giới hạn sức mạnh (Mặc định: TẮT / Không giới hạn sức mạnh)
+        self.chk_limit_strength = QCheckBox()
+        self.chk_limit_strength.setChecked(self.config_data.get("uci_limit_strength", False))
+        self.chk_limit_strength.setToolTip("Mặc định TẮT (Không giới hạn sức mạnh - Bot đánh Max Elo). Bật lên để giới hạn Elo và độ trễ trong tab Nâng Cao.")
+        lbl_strength = QLabel("Giới hạn sức mạnh:")
+        lbl_strength.setToolTip(self.chk_limit_strength.toolTip())
+        basic_layout.addRow(lbl_strength, self.chk_limit_strength)
+
+        self.tab_basic.setLayout(basic_layout)
+        self.tabs.addTab(self.tab_basic, "Cơ Bản")
+        
+        # --- TAB NÂNG CAO ---
+        self.tab_adv = QWidget()
+        adv_layout = QFormLayout()
+        adv_layout.setContentsMargins(15, 15, 15, 15)
+        adv_layout.setSpacing(14)
+        
+        self.preset_is_updating = False
+        
+        # Chế độ chơi (Presets)
+        self.combo_preset = QComboBox()
+        self.combo_preset.addItems(["Cờ siêu chớp (1 Phút)", "Cờ chớp (3 Phút)", "Cờ nhanh (10 Phút)", "Tùy chỉnh"])
+        preset_idx = self.config_data.get("preset_index", 3)
+        self.combo_preset.setCurrentIndex(preset_idx)
+        self.combo_preset.currentIndexChanged.connect(self.apply_preset)
+        adv_layout.addRow("Chế độ chơi:", self.combo_preset)
         
         # Trình độ Bot (Elo)
         self.spin_elo = QSpinBox()
         self.spin_elo.setRange(1320, 4000)
         self.spin_elo.setValue(self.config_data.get("uci_elo", 2000))
-        self.spin_elo.setToolTip("Điều chỉnh sức mạnh của Bot. Nên để ngang bằng hoặc cao hơn rank của bạn một chút.")
+        self.spin_elo.setToolTip("Điều chỉnh sức mạnh của Bot khi Bật giới hạn sức mạnh.")
         lbl_elo = QLabel("Trình độ Bot (Elo):")
         lbl_elo.setToolTip(self.spin_elo.toolTip())
-        basic_layout.addRow(lbl_elo, self.spin_elo)
+        adv_layout.addRow(lbl_elo, self.spin_elo)
         
         # Tỉ lệ giả vờ lỗi (%)
         self.spin_error = QSpinBox()
@@ -103,7 +148,7 @@ class ControlPanelUI(QWidget):
         self.spin_error.setToolTip("Xác suất Bot cố tình đi một nước kém hoàn hảo để giống người thật. Khuyên dùng: 10% đến 20%")
         lbl_error = QLabel("Tỉ lệ giả vờ lỗi:")
         lbl_error.setToolTip(self.spin_error.toolTip())
-        basic_layout.addRow(lbl_error, self.spin_error)
+        adv_layout.addRow(lbl_error, self.spin_error)
         
         # Thời gian suy nghĩ (giây)
         self.spin_bot_delay = QDoubleSpinBox()
@@ -113,52 +158,31 @@ class ControlPanelUI(QWidget):
         self.spin_bot_delay.setToolTip("Độ trễ trước khi Bot click chuột. Giúp tránh bị phát hiện là tool.")
         lbl_delay = QLabel("Thời gian suy nghĩ (giây):")
         lbl_delay.setToolTip(self.spin_bot_delay.toolTip())
-        basic_layout.addRow(lbl_delay, self.spin_bot_delay)
-        
-        # Share Screen Board (Bàn cờ phụ)
-        self.chk_share_board = QCheckBox()
-        self.chk_share_board.setChecked(self.config_data.get("show_share_board", False))
-        if self.share_board:
-            self.share_board.setVisible(self.chk_share_board.isChecked())
-        def on_share_board_toggle(state):
-            is_checked = state == Qt.Checked
-            if self.share_board:
-                self.share_board.setVisible(is_checked)
-        self.chk_share_board.stateChanged.connect(on_share_board_toggle)
-        basic_layout.addRow("Bàn cờ phụ (Share Screen):", self.chk_share_board)
-        # Human Mouse (Giả lập chuột)
+        adv_layout.addRow(lbl_delay, self.spin_bot_delay)
+
+        # Giả lập chuột con người
         self.chk_human_mouse = QCheckBox()
         self.chk_human_mouse.setChecked(self.config_data.get("human_mouse", True))
-        basic_layout.addRow("Giả lập chuột con người:", self.chk_human_mouse)
+        adv_layout.addRow("Giả lập chuột con người:", self.chk_human_mouse)
         
-        # Limit Strength (Checkbox)
-        self.config_data["uci_limit_strength"] = True
-        self.chk_limit_strength = QCheckBox()
-        self.chk_limit_strength.setChecked(True)
-        basic_layout.addRow("Giới hạn sức mạnh:", self.chk_limit_strength)
-        
+        # Độ cong chuột
+        self.spin_curvature = QSpinBox()
+        self.spin_curvature.setRange(0, 100)
+        self.spin_curvature.setValue(self.config_data.get("mouse_curvature", 30))
+        adv_layout.addRow("Độ cong chuột:", self.spin_curvature)
+
         # Scramble Time
         self.spin_scramble = QDoubleSpinBox()
         self.spin_scramble.setRange(1.0, 30.0)
         self.spin_scramble.setSingleStep(1.0)
         self.spin_scramble.setValue(self.config_data.get("scramble_time", 5.0))
-        basic_layout.addRow("Thời gian bắt đầu tàn sát (s):", self.spin_scramble)
-        
-        self.tab_basic.setLayout(basic_layout)
-        self.tabs.addTab(self.tab_basic, "Cơ Bản")
-        
-        # --- TAB NÂNG CAO ---
-        self.tab_adv = QWidget()
-        adv_layout = QFormLayout()
-        adv_layout.setContentsMargins(10, 15, 10, 10)
-        adv_layout.setSpacing(12)
+        adv_layout.addRow("Thời gian bắt đầu tàn sát (s):", self.spin_scramble)
         
         # Autoplay (BOT Mode) - Hidden from UI, logic kept intact
         self.chk_autoplay = QCheckBox()
         self.chk_autoplay.setChecked(self.config_data.get("autoplay", False))
         self.worker.autoplay_ui_signal.connect(self.chk_autoplay.setChecked, Qt.QueuedConnection)
 
-        
         # Time Limit (s)
         self.spin_time = QDoubleSpinBox()
         self.spin_time.setRange(0.01, 10.0)
@@ -178,18 +202,15 @@ class ControlPanelUI(QWidget):
         self.spin_stable.setValue(self.config_data.get("stable_frames", 4))
         adv_layout.addRow("Khung hình chờ ổn định:", self.spin_stable)
         
-
-
-        # Mouse Curvature
-        self.spin_curvature = QSpinBox()
-        self.spin_curvature.setRange(0, 100)
-        self.spin_curvature.setValue(self.config_data.get("mouse_curvature", 30))
-        adv_layout.addRow("Độ cong chuột:", self.spin_curvature)
-        
-
-        
         self.tab_adv.setLayout(adv_layout)
-        self.tabs.addTab(self.tab_adv, "Nâng Cao")
+
+        # Đặt tab Nâng Cao vào QScrollArea
+        scroll_adv = QScrollArea()
+        scroll_adv.setWidgetResizable(True)
+        scroll_adv.setFrameShape(QFrame.NoFrame)
+        scroll_adv.setWidget(self.tab_adv)
+        self.tabs.addTab(scroll_adv, "Nâng Cao")
+        self.tabs.currentChanged.connect(self.on_tab_changed)
         
         main_layout.addWidget(self.tabs)
         
@@ -198,14 +219,14 @@ class ControlPanelUI(QWidget):
         # --- KHU VỰC NÚT BẤM ---
         # Nút Lưu Settings
         self.btn_save = QPushButton("LƯU SETTINGS")
-        self.btn_save.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 10px;")
+        self.btn_save.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 7px;")
         self.btn_save.clicked.connect(self.save_config)
         main_layout.addWidget(self.btn_save)
         
         # Grid cho 4 nút điều khiển
         grid_layout = QGridLayout()
-        grid_layout.setSpacing(10)
-        grid_layout.setContentsMargins(0, 5, 0, 0)
+        grid_layout.setSpacing(6)
+        grid_layout.setContentsMargins(0, 2, 0, 0)
         
         # [1] Nút Bật/Tắt
         self.btn_toggle = QPushButton()
@@ -264,6 +285,7 @@ class ControlPanelUI(QWidget):
         # Checkboxes
         self.chk_limit_strength.stateChanged.connect(self.save_config)
         self.chk_share_board.stateChanged.connect(self.save_config)
+        self.chk_draw_main.stateChanged.connect(self.save_config)
         # SpinBoxes
         self.spin_elo.valueChanged.connect(self.save_config)
         self.spin_error.valueChanged.connect(self.save_config)
@@ -308,36 +330,42 @@ class ControlPanelUI(QWidget):
         if index != 3:
             self.save_config()
 
+    def on_tab_changed(self, index):
+        if index == 0:
+            self.resize(320, 290)
+        else:
+            self.resize(340, 520)
+
     def update_toggle_btn_style(self):
         if self.worker.is_paused:
             self.btn_toggle.setText("[1] BẬT / TẮT: TẮT")
-            self.btn_toggle.setStyleSheet("background-color: #f44336; color: white; font-weight: bold; padding: 10px;")
+            self.btn_toggle.setStyleSheet("background-color: #f44336; color: white; font-weight: bold; padding: 7px;")
         else:
             self.btn_toggle.setText("[1] BẬT / TẮT: BẬT")
-            self.btn_toggle.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
+            self.btn_toggle.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 7px;")
 
     def update_suggest_btn_style(self, is_on):
         state = "BẬT" if is_on else "TẮT"
         self.btn_suggest.setText(f"[2] GỢI Ý: {state}")
-        self.btn_suggest.setStyleSheet(f"background-color: {'#2196F3' if is_on else '#607D8B'}; color: white; font-weight: bold; padding: 10px;")
+        self.btn_suggest.setStyleSheet(f"background-color: {'#2196F3' if is_on else '#607D8B'}; color: white; font-weight: bold; padding: 7px;")
 
     def update_autoplay_btn_style(self, is_on):
         state = "BẬT" if is_on else "TẮT"
         self.btn_auto.setText(f"[3] AUTOPLAY: {state}")
-        self.btn_auto.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold; padding: 10px;")
+        self.btn_auto.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold; padding: 7px;")
 
     def update_autofarm_btn_style(self, is_on):
         state = "BẬT" if is_on else "TẮT"
         self.btn_autofarm.setText(f"[4] AUTOFARM: {state}")
-        self.btn_autofarm.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 10px;")
+        self.btn_autofarm.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 7px;")
 
     def update_stealth_btn_style(self, is_stealth):
         if is_stealth:
             self.btn_stealth.setText("[F10] ĐANG ẨN (BẤM F10 ĐỂ HIỆN)")
-            self.btn_stealth.setStyleSheet("background-color: #D32F2F; color: white; font-weight: bold; padding: 8px;")
+            self.btn_stealth.setStyleSheet("background-color: #D32F2F; color: white; font-weight: bold; padding: 6px;")
         else:
             self.btn_stealth.setText("[F10] ẨN TOOL (STEALTH MODE)")
-            self.btn_stealth.setStyleSheet("background-color: #37474F; color: white; font-weight: bold; padding: 8px;")
+            self.btn_stealth.setStyleSheet("background-color: #37474F; color: white; font-weight: bold; padding: 6px;")
 
     def toggle_strength_inputs(self):
         is_checked = self.chk_limit_strength.isChecked()
@@ -362,9 +390,15 @@ class ControlPanelUI(QWidget):
         self.config_data["force_side_enabled"] = self.chk_force_side.isChecked()
         self.config_data["force_side"] = "black" if self.radio_black.isChecked() else "white"
         self.config_data["show_share_board"] = self.chk_share_board.isChecked()
+        self.config_data["draw_on_main_board"] = self.chk_draw_main.isChecked()
         try:
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config_data, f, indent=4)
+            if hasattr(self.worker, 'engine') and self.worker.engine:
+                try:
+                    self.worker.engine.reload_config()
+                except Exception:
+                    pass
             self.btn_save.setText("LƯU: ĐÃ LƯU")
         except Exception as e:
             print(f"Lỗi khi lưu config: {e}")

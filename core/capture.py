@@ -5,11 +5,13 @@ import json
 import os
 import pytesseract
 import re
+import threading
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 class BoardCapture:
     def __init__(self):
+        self.lock = threading.Lock()
         self.sct = mss.mss()
         self.bbox = None
         self.clock_region = None
@@ -50,7 +52,8 @@ class BoardCapture:
         if not self.bbox:
             raise ValueError("Chưa chọn vùng bàn cờ. Vui lòng gọi select_roi() trước.")
             
-        img = np.array(self.sct.grab(self.bbox))
+        with self.lock:
+            img = np.array(self.sct.grab(self.bbox))
         return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         
     def get_remaining_time(self):
@@ -59,7 +62,8 @@ class BoardCapture:
             return None
             
         try:
-            img = np.array(self.sct.grab(self.clock_region))
+            with self.lock:
+                img = np.array(self.sct.grab(self.clock_region))
             gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
             # Thresholding to make text clear
             _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
