@@ -123,11 +123,7 @@ class StealthController(QObject):
         self.worker.is_stealth_active = False
             
         if self.control_panel:
-            if hasattr(self.control_panel, "update_toggle_btn_style"):
-                self.control_panel.update_toggle_btn_style()
             if hasattr(self.control_panel, "update_suggest_btn_style"):
-                self.control_panel.update_suggest_btn_style(self.worker.config_data.get("suggest_mode", True))
-            if hasattr(self.control_panel, "update_autoplay_btn_style"):
-                self.control_panel.update_autoplay_btn_style(self.worker.config_data.get("autoplay", False))
+                self.control_panel.update_suggest_btn_style(self.worker.config_data.get("suggest_mode", False))
             if hasattr(self.control_panel, "update_stealth_btn_style"):
                 self.control_panel.update_stealth_btn_style(False)

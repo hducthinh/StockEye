@@ -1,84 +1,89 @@
 # 👁️‍🗨️ StockEye - The Ultimate Real-time Chess Assistant & Autobot
- hi
-![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
-![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green.svg)
-![PyQt](https://img.shields.io/badge/PyQt-5%2F6-red.svg)
-![Stockfish](https://img.shields.io/badge/Engine-Stockfish-orange.svg)
-![Tesseract OCR](https://img.shields.io/badge/Tesseract-OCR-blueviolet.svg)
 
-**StockEye** là công cụ hỗ trợ phân tích và tự động hóa cờ vua theo thời gian thực (Real-time) mạnh mẽ nhất. Bằng sự kết hợp giữa **Thị giác máy tính (Computer Vision)**, **Nhận dạng ký tự (OCR)** và siêu máy tính **Stockfish**, công cụ không chỉ phân tích trận đấu mà còn có khả năng tự động chơi (Autoplay) với các hành vi mô phỏng người thật tinh vi nhất.
+![Python](https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat&logo=python)
+![OpenCV](https://img.shields.io/badge/OpenCV-4.x-green.svg?style=flat&logo=opencv)
+![PyQt](https://img.shields.io/badge/PyQt-5%2F6-red.svg?style=flat)
+![Stockfish](https://img.shields.io/badge/Engine-Stockfish-orange.svg?style=flat)
 
----
-
-## 🌟 Các tính năng đột phá (Killer Features)
-
-- **Auto-Tracker & Auto-Sync:** Tự động phát hiện chuyển động của quân cờ thông qua `cv2.absdiff` siêu nhẹ, không tốn tài nguyên. Khả năng tự động đồng bộ lại thế cờ (Mid-game Sync) và **nhận diện khi bắt đầu ván mới (New Game)** cực kỳ mượt mà.
-- **Smart Autoplay (Bot tự đánh):** Thay vì can thiệp vào web, StockEye điều khiển chuột vật lý. Sử dụng thuật toán tiệm cận Fitts' Law để mô phỏng độ cong của đường chuột, thời gian chần chừ (hesitation), giúp những nước đi trông hoàn toàn giống con người.
-- **Time Management (OCR Đồng hồ):** Đọc đồng hồ đếm ngược của bạn theo thời gian thực bằng Tesseract OCR. Khi thời gian cạn kiệt, Bot tự động chuyển sang trạng thái **Time Scramble** (Đánh siêu tốc, bỏ qua các bước mô phỏng người thật để chiến thắng thời gian).
-- **Predictive Premove:** Stockfish dự đoán nước đi bắt buộc của đối thủ, Bot sẽ tự động cầm sẵn quân cờ (hover) ở ô xuất phát và thả tay ngay lập tức (0.001s) khi đối thủ vừa đi đúng nước dự đoán.
-- **Auto-Farm Mode (Cày rank tự động):** Khả năng tự động tìm nút "New Game" hoặc "Rematch" trên màn hình. Cho phép treo máy chơi liên tục 24/7 không cần bất kỳ sự can thiệp nào của con người.
-- **Control Panel Trực quan:** Giao diện điều khiển cho phép tùy chỉnh nóng mọi thông số như: Bot Delay, Số luồng CPU (Threads), Độ cong chuột (Mouse Curvature), Thời gian Scramble...
-- **Invisible Overlay UI:** Lớp giao diện hiển thị bằng PyQt được thiết kế hoàn toàn trong suốt (Transparent), chống chụp màn hình (WDA_EXCLUDEFROMCAPTURE) để qua mặt các công cụ Anti-Cheat, đồng thời click-through (xuyên chuột) không làm phiền người chơi.
+**StockEye** là công cụ hỗ trợ phân tích cờ vua theo thời gian thực (Real-time) mạnh mẽ. Bằng sự kết hợp giữa **Thị giác máy tính (Computer Vision)** và siêu máy tính **Stockfish**, công cụ có khả năng đọc hiểu thế cờ ngay trên màn hình và gợi ý các nước đi tối ưu nhất thông qua một giao diện HUD (Heads-Up Display) tinh gọn, trực quan và hoàn toàn trong suốt.
 
 ---
 
-## ⌨️ Hệ thống Phím tắt (Global Hotkeys)
-Các phím tắt hoạt động toàn cầu trên máy tính của bạn:
+## 🌟 Các Tính Năng Nổi Bật
 
-- `1` : **Bật / Tắt Tool** (Tạm dừng mọi hoạt động của bot/nhận diện).
-- `2` : **Bật / Tắt Gợi ý** (Bật/tắt mũi tên phân tích nước đi trên màn hình).
-- `3` : **Bật / Tắt Autoplay** (Cho phép bot tự điều khiển chuột để chơi).
-- `4` : **Bật / Tắt Autofarm** (Chế độ tự động tìm ván mới khi ván cũ kết thúc).
-- `5` : **Ép phe Trắng** (Bắt tool hiểu rằng bạn đang cầm quân Trắng).
-- `6` : **Ép phe Đen** (Bắt tool hiểu rằng bạn đang cầm quân Đen).
-- `ESC` : **Kill-switch** (Hủy ngay lập tức mọi hàng đợi click chuột, dùng khi bot bị lỗi hoặc mất kiểm soát).
+- **Auto-Detect Chessboard & Templates:** Tự động phát hiện vị trí bàn cờ trên màn hình và tự động trích xuất bộ template 32 quân cờ mà không cần thao tác phức tạp hay cài đặt thêm phần mềm bên ngoài.
+- **Auto-Tracker & Auto-Sync:** Tự động theo dõi chuyển động của quân cờ thông qua thuật toán `cv2.absdiff` siêu nhẹ, không tốn tài nguyên. Khả năng tự động đồng bộ lại thế cờ (Mid-game Sync) và nhận diện khi bắt đầu ván mới (New Game) cực kỳ mượt mà.
+- **Visual Move Suggestions:** Hiển thị trực quan các nước đi tối ưu trực tiếp trên bàn cờ hoặc qua một bàn cờ phụ với các mũi tên màu sắc rõ ràng (Best Move, 2nd, 3rd, 4th).
+- **Control Panel Tinh Gọn:** Giao diện điều khiển cho phép tùy chỉnh nóng mọi thông số: Bật/tắt vẽ lên bàn cờ, Ép phe (Trắng / Đen), Độ sâu Engine, số luồng CPU...
+- **Invisible Overlay UI:** Lớp giao diện hiển thị bằng PyQt được thiết kế trong suốt (Transparent), xuyên cảm ứng (Click-through) và chống chụp màn hình (WDA_EXCLUDEFROMCAPTURE), mang đến trải nghiệm mượt mà không cản trở thao tác chuột.
+
+---
+
+## ⌨️ Hệ Thống Phím Tắt (Global Hotkeys)
+
+Điều khiển ứng dụng từ bất kỳ đâu trên máy tính:
+
+- `2` : **Bật / Tắt Gợi ý** (Vẽ mũi tên phân tích nước đi trên màn hình).
+- `5` : **Ép phe Trắng** (Bắt công cụ hiểu rằng bạn đang cầm quân Trắng).
+- `6` : **Ép phe Đen** (Bắt công cụ hiểu rằng bạn đang cầm quân Đen).
+- `ESC` : **Hủy / Dừng khẩn cấp**.
 - `F4` : **Thoát hoàn toàn ứng dụng**.
 
 ---
 
-## 🛠️ Cài đặt & Sử dụng (Installation & Usage)
+## 🛠️ Hướng Dẫn Cài Đặt (Installation)
 
-### 1. Yêu cầu hệ thống:
-- Hệ điều hành: Windows 10/11.
-- Tesseract OCR (Bắt buộc cho tính năng đọc đồng hồ). Cài đặt tại `C:\Program Files\Tesseract-OCR\tesseract.exe`.
-- Màn hình độ phân giải 1920x1080 (khuyến nghị).
-- Python 3.9 trở lên.
+### 1. Yêu Cầu Hệ Thống
 
-### 2. Cài đặt môi trường:
+- **Hệ điều hành:** Windows 10/11.
+- **Python:** 3.9 trở lên.
+- **Màn hình:** Độ phân giải 1920x1080 (khuyến nghị).
+
+### 2. Cài Đặt Môi Trường
+
 ```bash
 git clone https://github.com/hducthinh/StockEye.git
 cd StockEye
 pip install -r requirements.txt
 ```
-> **Lưu ý:** Tải [Stockfish Engine](https://stockfishchess.org/download/) bản nhị phân (.exe) và đặt vào thư mục `engine/` (VD: `engine/stockfish-windows-x86-64-avx2.exe`).
 
-### 3. Huấn luyện hệ thống (Chỉ 1 lần duy nhất):
-Do mỗi bàn cờ trên trình duyệt có kích thước khác nhau, bạn cần setup hình dạng quân cờ:
+> **Lưu ý Quan Trọng:** Hãy tải [Stockfish Engine](https://stockfishchess.org/download/) bản nhị phân (.exe) mới nhất và đặt vào thư mục `engine/` (Ví dụ: `engine/stockfish-windows-x86-64-avx2.exe`).
 
-1. Mở một bàn cờ **THẾ XUẤT PHÁT** (Mới tinh, 32 quân nằm đúng vị trí chuẩn) trên trình duyệt.
-2. Chạy file cấu hình tự động: `python auto_get_templates.py`
-3. Kéo chuột vẽ vùng bàn cờ. Nhấn `Enter` hoặc `Space` để chốt tọa độ.
-4. Tọa độ bàn cờ và 32 bức ảnh mẫu (templates) sẽ được trích xuất hoàn hảo và lưu lại để sử dụng cho các lần sau.
+### 3. Cân Chỉnh Bàn Cờ (Chỉ làm 1 lần duy nhất)
 
-### 4. Chạy ứng dụng:
+Mỗi bàn cờ trên trình duyệt có kích thước khác nhau. Việc setup cực kỳ đơn giản:
+
+1. Mở một bàn cờ **THẾ XUẤT PHÁT** (mới bắt đầu, 32 quân nằm đúng vị trí chuẩn) trên trình duyệt.
+2. Chạy file cấu hình tự động:
+   ```bash
+   python auto_setup.py
+   ```
+3. Công cụ sẽ tự động quét và nhận diện bàn cờ. Bạn chỉ cần nhấn `Enter` để xác nhận (hoặc nhấn `C` để tự kéo thả vùng chọn bằng tay).
+4. Tọa độ bàn cờ và bộ 32 ảnh mẫu (templates) sẽ được cắt và trích xuất hoàn toàn tự động!
+
+### 4. Chạy Ứng Dụng
+
 ```bash
 python main.py
 ```
 
 ---
 
-## ⚖️ TUYÊN BỐ MIỄN TRỪ TRÁCH NHIỆM PHÁP LÝ (LEGAL DISCLAIMER)
+## ⚖️ TUYÊN BỐ MIỄN TRỪ TRÁCH NHIỆM (LEGAL DISCLAIMER)
 
 **Dự án StockEye được phát triển ĐỘC QUYỀN cho các mục đích:**
-1. Nghiên cứu khoa học máy tính, đặc biệt là xử lý ảnh (Computer Vision), nhận dạng OCR và tương tác mô phỏng vật lý chuột.
+
+1. Nghiên cứu khoa học máy tính, đặc biệt là xử lý ảnh (Computer Vision), nhận dạng OCR và tương tác mô phỏng chuột máy tính.
 2. Phân tích cờ vua ngoại tuyến (Offline Analysis) chống lại các Engine khác hoặc tự luyện tập để nâng cao trình độ.
 
-**NGHIÊM CẤM:**
-- Việc sử dụng công cụ này (đặc biệt là tính năng Autoplay / Autofarm) trên các nền tảng cờ vua trực tuyến (như Chess.com, Lichess.org) trong các ván đấu có tính điểm xếp hạng (Ranked games). Hành vi này vi phạm nghiêm trọng Điều khoản Dịch vụ (Terms of Service) và Chính sách Công bằng (Fair Play Policy).
+> ⚠️ **NGHIÊM CẤM:**
+> Việc sử dụng công cụ này (đặc biệt là các tính năng tự động đánh Autoplay / Autofarm nếu có) trên các nền tảng cờ vua trực tuyến (như Chess.com, Lichess.org) trong các ván đấu có tính điểm xếp hạng (Ranked games). Hành vi này vi phạm nghiêm trọng Điều khoản Dịch vụ (Terms of Service) và Chính sách Công bằng (Fair Play Policy).
 
 **Trách nhiệm người dùng:**
+
 - Tác giả dự án (hducthinh) **KHÔNG chịu bất kỳ trách nhiệm pháp lý nào** đối với các hành vi sử dụng sai mục đích, bao gồm việc tài khoản bị khóa (Account Banned), tước bỏ danh hiệu, hoặc các vấn đề liên đới phát sinh từ việc gian lận trực tuyến.
-- Việc tải xuống và sử dụng mã nguồn đồng nghĩa với việc bạn ĐÃ ĐỌC, HIỂU và ĐỒNG Ý hoàn toàn với các điều khoản miễn trừ trách nhiệm này.
+- Việc tải xuống và sử dụng mã nguồn đồng nghĩa với việc bạn **ĐÃ ĐỌC, HIỂU và ĐỒNG Ý** hoàn toàn với các điều khoản miễn trừ trách nhiệm này.
 
 ---
-*Developed with ❤️ by hducthinh.*
+
+_Developed with ❤️ by hducthinh._

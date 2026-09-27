@@ -3,18 +3,14 @@ import numpy as np
 import mss
 import json
 import os
-import pytesseract
-import re
 import threading
-
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 class BoardCapture:
     def __init__(self):
         self.lock = threading.Lock()
-        self.sct = mss.mss()
+        sct_class = getattr(mss, 'MSS', mss.mss)
+        self.sct = sct_class()
         self.bbox = None
-        self.clock_region = None
         self.sq_width = 0
         self.sq_height = 0
         
@@ -37,9 +33,6 @@ class BoardCapture:
                         self.sq_width = self.bbox["width"] / 8.0
                         self.sq_height = self.bbox["height"] / 8.0
                         print(f"Loaded bbox: {self.bbox}")
-                    if "clock_region" in config:
-                        self.clock_region = config["clock_region"]
-                        print(f"Loaded clock_region: {self.clock_region}")
                     if self.bbox:
                         return
             except Exception as e:
@@ -55,44 +48,6 @@ class BoardCapture:
         with self.lock:
             img = np.array(self.sct.grab(self.bbox))
         return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-        
-    def get_remaining_time(self):
-        """Chụp và đọc thời gian từ vùng đồng hồ bằng OCR"""
-        if not self.clock_region:
-            return None
-            
-        try:
-            with self.lock:
-                img = np.array(self.sct.grab(self.clock_region))
-            gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
-            # Thresholding to make text clear
-            _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-            
-            # OCR đặc tả chữ số và dấu phân cách thời gian
-            text = pytesseract.image_to_string(thresh, config='--psm 7 -c tessedit_char_whitelist=0123456789:.,')
-            text = text.strip().replace(',', '.')
-            
-            # Tìm định dạng mm:ss hoặc mm:ss.s
-            match_colon = re.search(r'(\d+):(\d{2}(?:\.\d+)?)', text)
-            if match_colon:
-                m = int(match_colon.group(1))
-                s = float(match_colon.group(2))
-                return float(m * 60 + s)
-                
-            # Tìm định dạng ss.s (khi < 10s)
-            match_dot = re.search(r'(\d+\.\d+)', text)
-            if match_dot:
-                return float(match_dot.group(1))
-                
-            # Lọc số nguyên cuối cùng để tránh rác OCR
-            nums = re.findall(r'\d+', text)
-            if nums:
-                return float(nums[-1])
-        except Exception:
-            # Giữ giá trị cũ nếu OCR lỗi
-            return None
-            
-        return None
 
     def pixel_to_square(self, x, y):
         col = int(x / self.sq_width)
@@ -396,45 +351,6 @@ class BoardCapture:
         fen_full = f"{fen_board} {turn} {castling} - 0 1"
         
         return fen_full
-
-    def find_new_game_button(self, img):
-        import cv2
-        import numpy as np
-        import glob
-        import os
-
-        if not hasattr(self, '_new_game_templates'):
-            self._new_game_templates = []
-            for path in glob.glob("templates/newgame*.png"):
-                if os.path.exists(path):
-                    tpl = cv2.imread(path, cv2.IMREAD_COLOR)
-                    if tpl is not None:
-                        self._new_game_templates.append(tpl)
-
-        if not self._new_game_templates:
-            return None
-
-        # Tìm trên toàn bộ bàn cờ thay vì crop
-        crop = img
-        x1, y1 = 0, 0
-
-        for tpl in self._new_game_templates:
-            if tpl.shape[0] > crop.shape[0] or tpl.shape[1] > crop.shape[1]:
-                continue
-                
-            res = cv2.matchTemplate(crop, tpl, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(res)
-            
-            if max_val > 0.8:
-                # Get center of template
-                cx = max_loc[0] + tpl.shape[1] // 2
-                cy = max_loc[1] + tpl.shape[0] // 2
-                
-                # Convert to absolute screen coordinates
-                abs_x = self.bbox["left"] + x1 + cx
-                abs_y = self.bbox["top"] + y1 + cy
-                return (abs_x, abs_y)
-        return None
 
     def is_start_position_fast(self, img):
         import cv2

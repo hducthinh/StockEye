@@ -16,7 +16,7 @@ class ControlPanelUI(QWidget):
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
         
         # Thiết lập kích thước nhỏ gọn
-        self.resize(320, 290)
+        self.resize(320, 250)
         
         # Đưa cửa sổ lên góc phải trên màn hình
         try:
@@ -139,50 +139,6 @@ class ControlPanelUI(QWidget):
         lbl_elo.setToolTip(self.spin_elo.toolTip())
         adv_layout.addRow(lbl_elo, self.spin_elo)
         
-        # Tỉ lệ giả vờ lỗi (%)
-        self.spin_error = QSpinBox()
-        self.spin_error.setRange(0, 100)
-        self.spin_error.setSuffix(" %")
-        error_val = int(self.config_data.get("human_error_rate", 0.2) * 100)
-        self.spin_error.setValue(error_val)
-        self.spin_error.setToolTip("Xác suất Bot cố tình đi một nước kém hoàn hảo để giống người thật. Khuyên dùng: 10% đến 20%")
-        lbl_error = QLabel("Tỉ lệ giả vờ lỗi:")
-        lbl_error.setToolTip(self.spin_error.toolTip())
-        adv_layout.addRow(lbl_error, self.spin_error)
-        
-        # Thời gian suy nghĩ (giây)
-        self.spin_bot_delay = QDoubleSpinBox()
-        self.spin_bot_delay.setRange(0.0, 10.0)
-        self.spin_bot_delay.setSingleStep(0.1)
-        self.spin_bot_delay.setValue(self.config_data.get("bot_delay", 0.15))
-        self.spin_bot_delay.setToolTip("Độ trễ trước khi Bot click chuột. Giúp tránh bị phát hiện là tool.")
-        lbl_delay = QLabel("Thời gian suy nghĩ (giây):")
-        lbl_delay.setToolTip(self.spin_bot_delay.toolTip())
-        adv_layout.addRow(lbl_delay, self.spin_bot_delay)
-
-        # Giả lập chuột con người
-        self.chk_human_mouse = QCheckBox()
-        self.chk_human_mouse.setChecked(self.config_data.get("human_mouse", True))
-        adv_layout.addRow("Giả lập chuột con người:", self.chk_human_mouse)
-        
-        # Độ cong chuột
-        self.spin_curvature = QSpinBox()
-        self.spin_curvature.setRange(0, 100)
-        self.spin_curvature.setValue(self.config_data.get("mouse_curvature", 30))
-        adv_layout.addRow("Độ cong chuột:", self.spin_curvature)
-
-        # Scramble Time
-        self.spin_scramble = QDoubleSpinBox()
-        self.spin_scramble.setRange(1.0, 30.0)
-        self.spin_scramble.setSingleStep(1.0)
-        self.spin_scramble.setValue(self.config_data.get("scramble_time", 5.0))
-        adv_layout.addRow("Thời gian bắt đầu tàn sát (s):", self.spin_scramble)
-        
-        # Autoplay (BOT Mode) - Hidden from UI, logic kept intact
-        self.chk_autoplay = QCheckBox()
-        self.chk_autoplay.setChecked(self.config_data.get("autoplay", False))
-        self.worker.autoplay_ui_signal.connect(self.chk_autoplay.setChecked, Qt.QueuedConnection)
-
         # Time Limit (s)
         self.spin_time = QDoubleSpinBox()
         self.spin_time.setRange(0.01, 10.0)
@@ -223,47 +179,23 @@ class ControlPanelUI(QWidget):
         self.btn_save.clicked.connect(self.save_config)
         main_layout.addWidget(self.btn_save)
         
-        # Grid cho 4 nút điều khiển
+        # Grid cho các nút điều khiển
         grid_layout = QGridLayout()
         grid_layout.setSpacing(6)
         grid_layout.setContentsMargins(0, 2, 0, 0)
         
-        # [1] Nút Bật/Tắt
-        self.btn_toggle = QPushButton()
-        self.update_toggle_btn_style()
-        self.btn_toggle.clicked.connect(self.toggle_tool)
-        grid_layout.addWidget(self.btn_toggle, 0, 0)
-        
-        # [2] Nút Gợi Ý
+        # [2] Nút Bật/Tắt Gợi Ý
         self.btn_suggest = QPushButton()
-        self.update_suggest_btn_style(self.config_data.get("suggest_mode", True))
+        self.update_suggest_btn_style(self.config_data.get("suggest_mode", False))
         self.btn_suggest.clicked.connect(lambda: self.worker.toggle_suggest_mode())
         self.worker.suggest_ui_signal.connect(self.update_suggest_btn_style, Qt.QueuedConnection)
-        grid_layout.addWidget(self.btn_suggest, 0, 1)
-        
-        # [3] Nút Autoplay
-        self.btn_auto = QPushButton()
-        self.update_autoplay_btn_style(self.chk_autoplay.isChecked())
-        def on_autoplay_click():
-            self.worker.toggle_autoplay()
-        self.btn_auto.clicked.connect(on_autoplay_click)
-        self.chk_autoplay.stateChanged.connect(lambda: self.update_autoplay_btn_style(self.chk_autoplay.isChecked()))
-        grid_layout.addWidget(self.btn_auto, 1, 0)
-        
-        # [4] Nút Autofarm
-        self.btn_autofarm = QPushButton()
-        self.update_autofarm_btn_style(getattr(self.worker, 'auto_farm', False))
-        def on_autofarm_click():
-            self.worker.toggle_autofarm()
-        self.btn_autofarm.clicked.connect(on_autofarm_click)
-        self.worker.autofarm_ui_signal.connect(self.update_autofarm_btn_style, Qt.QueuedConnection)
-        grid_layout.addWidget(self.btn_autofarm, 1, 1)
+        grid_layout.addWidget(self.btn_suggest, 0, 0)
         
         # [F10] Nút Ẩn Tool (Stealth Mode / Boss Key)
         self.btn_stealth = QPushButton()
         self.update_stealth_btn_style(False)
         self.btn_stealth.clicked.connect(lambda: self.worker.toggle_stealth_signal.emit())
-        grid_layout.addWidget(self.btn_stealth, 2, 0, 1, 2)
+        grid_layout.addWidget(self.btn_stealth, 1, 0)
         
         main_layout.addLayout(grid_layout)
         
@@ -288,15 +220,9 @@ class ControlPanelUI(QWidget):
         self.chk_draw_main.stateChanged.connect(self.save_config)
         # SpinBoxes
         self.spin_elo.valueChanged.connect(self.save_config)
-        self.spin_error.valueChanged.connect(self.save_config)
         self.spin_time.valueChanged.connect(self.save_config)
-        self.spin_bot_delay.valueChanged.connect(self.save_config)
         self.spin_threads.valueChanged.connect(self.save_config)
         self.spin_stable.valueChanged.connect(self.save_config)
-        self.chk_human_mouse.stateChanged.connect(self.save_config)
-
-        self.spin_curvature.valueChanged.connect(self.save_config)
-        self.spin_scramble.valueChanged.connect(self.save_config)
         
         # Tự động nhảy sang "Tùy chỉnh" nếu người dùng tự kéo số
         def on_custom_change():
@@ -305,8 +231,6 @@ class ControlPanelUI(QWidget):
                 self.combo_preset.setCurrentIndex(3)
                 self.preset_is_updating = False
         
-        self.spin_bot_delay.valueChanged.connect(on_custom_change)
-        self.spin_error.valueChanged.connect(on_custom_change)
         self.spin_time.valueChanged.connect(on_custom_change)
 
     def apply_preset(self, index):
@@ -314,17 +238,11 @@ class ControlPanelUI(QWidget):
         self.preset_is_updating = True
         
         if index == 0: # Cờ siêu chớp (1 Phút)
-            self.spin_bot_delay.setValue(0.6)
-            self.spin_error.setValue(15)
             self.spin_time.setValue(0.05)
         elif index == 1: # Cờ chớp (3 Phút)
-            self.spin_bot_delay.setValue(3.5)
-            self.spin_error.setValue(10)
             self.spin_time.setValue(0.1)
         elif index == 2: # Cờ nhanh (10 Phút)
-            self.spin_bot_delay.setValue(10.0)
-            self.spin_error.setValue(5)
-            self.spin_time.setValue(0.2)
+            self.spin_time.setValue(0.25)
             
         self.preset_is_updating = False
         if index != 3:
@@ -332,32 +250,17 @@ class ControlPanelUI(QWidget):
 
     def on_tab_changed(self, index):
         if index == 0:
-            self.resize(320, 290)
+            self.resize(320, 250)
         else:
-            self.resize(340, 520)
-
-    def update_toggle_btn_style(self):
-        if self.worker.is_paused:
-            self.btn_toggle.setText("[1] BẬT / TẮT: TẮT")
-            self.btn_toggle.setStyleSheet("background-color: #f44336; color: white; font-weight: bold; padding: 7px;")
-        else:
-            self.btn_toggle.setText("[1] BẬT / TẮT: BẬT")
-            self.btn_toggle.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 7px;")
+            self.resize(340, 300)
 
     def update_suggest_btn_style(self, is_on):
-        state = "BẬT" if is_on else "TẮT"
-        self.btn_suggest.setText(f"[2] GỢI Ý: {state}")
-        self.btn_suggest.setStyleSheet(f"background-color: {'#2196F3' if is_on else '#607D8B'}; color: white; font-weight: bold; padding: 7px;")
-
-    def update_autoplay_btn_style(self, is_on):
-        state = "BẬT" if is_on else "TẮT"
-        self.btn_auto.setText(f"[3] AUTOPLAY: {state}")
-        self.btn_auto.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold; padding: 7px;")
-
-    def update_autofarm_btn_style(self, is_on):
-        state = "BẬT" if is_on else "TẮT"
-        self.btn_autofarm.setText(f"[4] AUTOFARM: {state}")
-        self.btn_autofarm.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 7px;")
+        if is_on:
+            self.btn_suggest.setText("[2] GỢI Ý: ĐANG BẬT")
+            self.btn_suggest.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 7px;")
+        else:
+            self.btn_suggest.setText("[2] GỢI Ý: ĐANG TẮT")
+            self.btn_suggest.setStyleSheet("background-color: #f44336; color: white; font-weight: bold; padding: 7px;")
 
     def update_stealth_btn_style(self, is_stealth):
         if is_stealth:
@@ -370,22 +273,15 @@ class ControlPanelUI(QWidget):
     def toggle_strength_inputs(self):
         is_checked = self.chk_limit_strength.isChecked()
         self.spin_elo.setEnabled(is_checked)
-        self.spin_error.setEnabled(is_checked)
         self.spin_time.setEnabled(is_checked)
 
     def save_config(self):
         import json
         self.config_data["uci_limit_strength"] = self.chk_limit_strength.isChecked()
         self.config_data["uci_elo"] = self.spin_elo.value()
-        self.config_data["human_error_rate"] = self.spin_error.value() / 100.0
         self.config_data["time_limit"] = round(self.spin_time.value(), 2)
-        self.config_data["bot_delay"] = round(self.spin_bot_delay.value(), 2)
         self.config_data["threads"] = self.spin_threads.value()
         self.config_data["stable_frames"] = self.spin_stable.value()
-        self.config_data["human_mouse"] = self.chk_human_mouse.isChecked()
-
-        self.config_data["mouse_curvature"] = self.spin_curvature.value()
-        self.config_data["scramble_time"] = round(self.spin_scramble.value(), 1)
         self.config_data["preset_index"] = self.combo_preset.currentIndex()
         self.config_data["force_side_enabled"] = self.chk_force_side.isChecked()
         self.config_data["force_side"] = "black" if self.radio_black.isChecked() else "white"
@@ -406,33 +302,31 @@ class ControlPanelUI(QWidget):
             
         QTimer.singleShot(2000, lambda: self.btn_save.setText("LƯU SETTINGS"))
 
-    def toggle_tool(self):
-        self.worker.is_paused = not self.worker.is_paused
-        self.update_toggle_btn_style()
-        if self.worker.is_paused:
-            self.worker.moves_ready.emit([]) # Xóa mũi tên cũ trên màn hình
-            with self.worker.click_queue.mutex:
-                self.worker.click_queue.queue.clear()
-            
-            # Commented out: Do not wipe user's preferences for 2 and 3 when pausing
-            # if self.worker.config_data.get("suggest_mode", False):
-            #     self.worker.config_data["suggest_mode"] = False
-            #     self.worker.suggest_ui_signal.emit(False)
-            # if self.worker.config_data.get("autoplay", False):
-            #     self.worker.config_data["autoplay"] = False
-            #     self.worker.autoplay_ui_signal.emit(False)
-            # if getattr(self.worker, 'auto_farm', False):
-            #     self.worker.auto_farm = False
-            #     self.worker.autofarm_ui_signal.emit(False)
-        else:
-            mode = "auto" if self.config_data.get("autoplay", False) else "auto_suggest"
-            self.worker.request_midgame_sync(mode)
-
     def closeEvent(self, event):
         """Thoát chương trình khi đóng cửa sổ"""
+        if getattr(self, '_is_closing', False):
+            event.accept()
+            return
+        self._is_closing = True
+
         print("\n[UI] Bảng điều khiển đã bị đóng. Đang thoát chương trình...")
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.running = False
+            if hasattr(self.worker, 'engine') and self.worker.engine:
+                try:
+                    self.worker.engine.close()
+                except Exception:
+                    pass
         if self.share_board:
-            self.share_board.close()
+            try:
+                self.share_board.close()
+            except Exception:
+                pass
+        if hasattr(self, 'overlay') and self.overlay:
+            try:
+                self.overlay.close()
+            except Exception:
+                pass
         QApplication.instance().quit()
         event.accept()
 
@@ -444,5 +338,4 @@ class ControlPanelUI(QWidget):
             self.radio_black.setChecked(True)
         self.save_config()
         # Buộc đồng bộ lại màu sau khi ép phe
-        mode = "auto" if self.config_data.get("autoplay", False) else "auto_suggest"
-        self.worker.request_midgame_sync(mode)
+        self.worker.request_midgame_sync("auto_suggest")

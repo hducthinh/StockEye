@@ -2,7 +2,9 @@ import json
 import chess
 import chess.engine
 import os
+import sys
 import threading
+from core.process_guard import init_process_guard, register_engine_pid, unregister_engine_pid, kill_pid_force
 
 class ChessEngine:
     def __init__(self, engine_path="engine/stockfish-windows-x86-64-avx2.exe", config_path="config.json"):
@@ -61,8 +63,30 @@ class ChessEngine:
                 except Exception as e:
                     print(f"[Engine] Không thể ngụy trang tiến trình: {e}")
 
+            # Khởi tạo bảo vệ tiến trình (dọn dẹp engine cũ và cài đặt Job Object tự hủy)
+            init_process_guard()
+
+            import subprocess
+            popen_kwargs = {}
+            if sys.platform == "win32":
+                # Ngăn chặn 100% cửa sổ console của engine (chrome.exe / Stockfish) xuất hiện
+                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = 0 # SW_HIDE
+                popen_kwargs["startupinfo"] = startupinfo
+
             print(f"[Engine] Đang khởi động Engine ({os.path.basename(target_engine_path)})...")
-            self.engine = chess.engine.SimpleEngine.popen_uci(target_engine_path)
+            self.engine = chess.engine.SimpleEngine.popen_uci(target_engine_path, **popen_kwargs)
+            
+            # Ghi nhận PID để bảo vệ và tiêu diệt triệt để khi tắt
+            try:
+                subproc = self.engine.transport.get_extra_info('subprocess')
+                self.engine_pid = getattr(subproc, 'pid', None)
+                if self.engine_pid:
+                    register_engine_pid(self.engine_pid)
+            except Exception:
+                self.engine_pid = None
             
             # Load cấu hình Stockfish
             self.apply_config_to_engine()
@@ -285,41 +309,19 @@ class ChessEngine:
                 
             return pushed_moves
 
-    def get_top_moves(self, limit=3, time_left=60.0):
-        """Lấy danh sách Top N nước đi tốt nhất từ Stockfish"""
+    def get_top_moves(self, limit=3):
+        """Lấy danh sách Top N nước đi tốt nhất từ Stockfish để gợi ý"""
         if not self.engine:
             return []
             
-        import random
-        human_error_rate = self.config.get("human_error_rate", 0.0)
-        
-        # Override nếu thời gian đang rất thấp (Scramble Mode)
-        engine_time_limit = self.config["time_limit"]
-        is_human_error = False
-        is_autoplay = self.config.get("autoplay", False)
-        
-        # Tiết kiệm CPU: Khi bật Autoplay, luôn lấy 1 nước đi (ngoại trừ khi có human error)
-        if is_autoplay:
-            limit = 1
-            
-        if time_left <= 5.0:
-            engine_time_limit = 0.01
-        elif time_left <= 15.0:
-            engine_time_limit = min(0.05, engine_time_limit)
-        else:
-            is_human_error = random.random() < human_error_rate
-        
-        # Lấy dư ra 1 nước nếu có kích hoạt Human Error
-        # Nâng MultiPV lên để lấy 4-5 nước đi khi kích hoạt Human Error
-        actual_search = max(limit + 4, 5) if is_human_error else limit
+        engine_time_limit = self.config.get("time_limit", 0.1)
+        actual_search = limit
         
         try:
             with self.lock:
                 board_copy = self.board.copy()
                 
-            is_limit_strength = self.config.get("uci_limit_strength")
-            if is_limit_strength and time_left <= 5.0:
-                is_limit_strength = False
+            is_limit_strength = self.config.get("uci_limit_strength", False)
                 
             if is_limit_strength:
                 top_moves = []
@@ -417,59 +419,6 @@ class ChessEngine:
                         })
                     
             top_moves.sort(key=lambda x: x["sort_val"], reverse=True)
-            
-            # Override: Không giả lập lỗi nếu có cơ hội chiếu hết trong <= 4 nước
-            if is_human_error and len(top_moves) > 0:
-                if top_moves[0]["score"].startswith("M"):
-                    m_val = top_moves[0]["score"][1:].lstrip("-")
-                    if m_val.isdigit() and int(m_val) <= 4:
-                        is_human_error = False
-                    
-            # Smart Human Error
-            if is_human_error and len(top_moves) > 1:
-                best_score_val = top_moves[0]["sort_val"]
-                candidates = []
-                
-                for i in range(1, len(top_moves)):
-                    diff = best_score_val - top_moves[i]["sort_val"]
-                    # Lọc nước Okay Move: rớt Eval từ 80 đến 250 centipawns
-                    if 80 <= diff <= 250:
-                        # Anti-blunder: Nếu thế cờ đang >= -1.0, không chọn nước rớt xuống < -2.0
-                        if best_score_val >= -100 and top_moves[i]["sort_val"] < -200:
-                            continue
-                        candidates.append(i)
-                        
-                if candidates:
-                    selected_idx = random.choice(candidates)
-                    selected_move = top_moves.pop(selected_idx)
-                    top_moves.insert(0, selected_move)
-                    top_moves.pop(1)
-                    print(f"[Engine] 🎭 Smart Human Error: Đã chọn nước top {selected_idx+1} thay thế!")
-                else:
-                    if top_moves[1]["sort_val"] > -300:
-                        top_moves.pop(0)
-                        print("[Engine] 🎭 Kích hoạt Human Error: Đang hiển thị nước Inaccuracy thay thế!")
-                    else:
-                        print("[Engine] 🎭 Hủy Human Error vì các nước thay thế đều là Blunder chí mạng!")
-            # [TỐI ƯU] Predictive Premove Check
-            if len(top_moves) > 0 and len(top_moves[0].get("pv", [])) >= 3:
-                pv = top_moves[0]["pv"]
-                our_move_uci = pv[0]
-                opp_move_uci = pv[1]
-                our_premove_uci = pv[2]
-                
-                board_test = board_copy.copy()
-                try:
-                    board_test.push(chess.Move.from_uci(our_move_uci))
-                    # Nếu đối thủ chỉ có 1 nước đi duy nhất, ta chắc chắn họ sẽ đi nước đó
-                    if len(list(board_test.legal_moves)) == 1:
-                        top_moves[0]["forced_premove"] = {
-                            "expected_opp_move": opp_move_uci,
-                            "our_premove": our_premove_uci
-                        }
-                except Exception:
-                    pass
-
             return top_moves[:limit]
             
         except Exception as e:
@@ -477,9 +426,16 @@ class ChessEngine:
             return []
 
     def close(self):
-        """Đóng an toàn Stockfish khi tắt app"""
-        if self.engine:
-            try:
-                self.engine.quit()
-            except Exception as e:
-                print(f"[Engine] Đã ngắt kết nối Stockfish (Tiến trình có thể đã tự đóng trước đó).")
+        """Đóng an toàn và tiêu diệt triệt để Stockfish/chrome.exe"""
+        with self.lock:
+            if self.engine:
+                pid = getattr(self, 'engine_pid', None)
+                try:
+                    self.engine.quit()
+                except Exception:
+                    pass
+                if pid:
+                    kill_pid_force(pid)
+                    unregister_engine_pid(pid)
+                self.engine = None
+                print("[Engine] Đã ngắt kết nối và giải phóng toàn bộ tiến trình Stockfish.")
