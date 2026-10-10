@@ -1,128 +1,83 @@
-import sys
-from PyQt5.QtWidgets import QWidget, QApplication
-from PyQt5.QtCore import Qt, QPoint, QRect, QTimer
-from PyQt5.QtGui import QPainter, QPen, QColor, QPolygon
-import math
 import ctypes
-import json
-import os
+import math
+
+from PyQt5.QtCore import QPoint, QRect, Qt
+from PyQt5.QtGui import QColor, QPainter, QPen, QPolygon
+from PyQt5.QtWidgets import QApplication, QWidget
+
 
 class OverlayUI(QWidget):
     def __init__(self):
         super().__init__()
-        
-        # Load phe người chơi và cài đặt vẽ lên màn hình chính
-        self.player_color = "white"
-        self.draw_on_main_board = False
-        if os.path.exists("config.json"):
-            try:
-                with open("config.json", "r", encoding="utf-8") as f:
-                    cfg = json.load(f)
-                    self.player_color = cfg.get("player_color", "white").lower()
-                    self.draw_on_main_board = cfg.get("draw_on_main_board", False)
-            except:
-                pass
-                
-        # Thiết lập cửa sổ Overlay
-        self.setWindowFlags(
-            Qt.FramelessWindowHint |      # Bỏ viền
-            Qt.WindowStaysOnTopHint |     # Luôn nổi trên cùng
-            Qt.WindowTransparentForInput |# Không chặn click chuột (Click-through)
-            Qt.Tool                       # Ẩn khỏi Taskbar
-        )
-        # Nền trong suốt
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        
-        # --- MA THUẬT: ẨN OVERLAY KHỎI MSS ---
-        # 0x00000011 (WDA_EXCLUDEFROMCAPTURE) giúp cửa sổ này trở nên "tàng hình"
-        # đối với các phần mềm quay/chụp màn hình. Do đó mss sẽ chỉ chụp được bàn cờ bên dưới!
-        try:
-            hwnd = int(self.winId())
-            ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
-        except Exception as e:
-            print("[UI] Không thể set DisplayAffinity:", e)
-        
-        # Đặt kích thước bằng với toàn bộ màn hình
-        screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(screen)
-        
-        # Biến lưu trữ các nước đi cần vẽ
-        # Format: [((start_x, start_y), (end_x, end_y), score), ...]
         self.moves_to_draw = []
+        self.capture_excluded = False
+        self.setWindowFlags(
+            Qt.FramelessWindowHint
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowTransparentForInput
+            | Qt.Tool
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._fit_virtual_desktop()
 
-    def set_draw_on_main_board(self, enabled):
-        """Bật/tắt vẽ mũi tên lên màn hình chính từ Control Panel"""
-        self.draw_on_main_board = enabled
-        if not enabled:
+    def _fit_virtual_desktop(self) -> None:
+        screens = QApplication.screens()
+        if not screens:
+            return
+        geometry = QRect(screens[0].geometry())
+        for screen in screens[1:]:
+            geometry = geometry.united(screen.geometry())
+        self.setGeometry(geometry)
+
+    def enable_capture_exclusion(self) -> bool:
+        if not hasattr(ctypes, "windll"):
+            return False
+        hwnd = int(self.winId())
+        result = ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
+        self.capture_excluded = bool(result)
+        return self.capture_excluded
+
+    def update_moves(self, moves: list) -> None:
+        self.moves_to_draw = list(moves)
+        self.update()
+
+    def clear_moves(self) -> None:
+        if self.moves_to_draw:
             self.moves_to_draw = []
             self.update()
 
-    def update_moves(self, moves):
-        """Hàm này được gọi từ Signal của Worker Thread để cập nhật data và vẽ lại"""
-        if not self.draw_on_main_board:
-            if self.moves_to_draw:
-                self.moves_to_draw = []
-                self.update()
+    def paintEvent(self, event) -> None:
+        if not self.moves_to_draw:
             return
-            
-        self.moves_to_draw = moves
-        self.update() # Kích hoạt hàm paintEvent()
-
-    def paintEvent(self, event):
-        """Hàm vẽ của PyQt, được gọi mỗi khi cần cập nhật màn hình"""
-        if not self.draw_on_main_board or not self.moves_to_draw:
-            return
-            
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing) # Chống răng cưa
-        
-        for i, move in enumerate(self.moves_to_draw):
-            start_pt, end_pt, score = move
-            
-            # Màu sắc theo thứ hạng:
-            if i == 0:
-                color = QColor(0, 255, 0, 200) # Green, alpha=200 - Best Move
-            elif i == 1:
-                color = QColor(0, 191, 255, 200) # DeepSkyBlue, alpha=200 - Strong Alternative
-            elif i == 2:
-                color = QColor(255, 215, 0, 180) # Gold/Yellow, alpha=180 - Acceptable / Interesting
-            else:
-                color = QColor(255, 0, 0, 180) # Red, alpha=180 - Bad / Blunder Risk
-                
-            pen = QPen(color, 6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-            painter.setPen(pen)
-            
-            p1 = QPoint(int(start_pt[0]), int(start_pt[1]))
-            p2 = QPoint(int(end_pt[0]), int(end_pt[1]))
-            
-            # 1. Vẽ thân mũi tên (đoạn thẳng)
+        painter.setRenderHint(QPainter.Antialiasing)
+        origin = self.geometry().topLeft()
+        for index, (start, end, score) in enumerate(self.moves_to_draw):
+            colors = (
+                QColor(0, 255, 127, 220), QColor(0, 190, 255, 210),
+                QColor(255, 215, 0, 200), QColor(255, 82, 82, 190),
+            )
+            color = colors[min(index, len(colors) - 1)]
+            p1 = QPoint(round(start[0] - origin.x()), round(start[1] - origin.y()))
+            p2 = QPoint(round(end[0] - origin.x()), round(end[1] - origin.y()))
+            painter.setPen(QPen(color, 6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             painter.drawLine(p1, p2)
-            
-            # 2. Vẽ đầu mũi tên
             self._draw_arrow_head(painter, p1, p2, color)
-            
-            # 3. Vẽ văn bản điểm số (Score)
-            painter.setPen(QPen(QColor(255, 0, 0), 2)) # Chữ đỏ
-            # Đặt text lệch ra một chút để không đè lên mũi tên
-            painter.drawText(p2.x() + 15, p2.y() + 15, str(score))
+            painter.setPen(QPen(QColor(255, 255, 255), 2))
+            painter.drawText(p2.x() + 10, p2.y() + 18, str(score))
 
-    def _draw_arrow_head(self, painter, p1, p2, color):
-        """Tính toán toán học để vẽ tam giác đầu mũi tên"""
-        dx = p2.x() - p1.x()
-        dy = p2.y() - p1.y()
-        angle = math.atan2(dy, dx)
-        
-        arrow_size = 20
-        # Tính toán 2 điểm đáy của tam giác cân
-        arrow_p1 = QPoint(
-            int(p2.x() - arrow_size * math.cos(angle - math.pi / 6)),
-            int(p2.y() - arrow_size * math.sin(angle - math.pi / 6))
+    @staticmethod
+    def _draw_arrow_head(painter: QPainter, start: QPoint, end: QPoint, color: QColor) -> None:
+        angle = math.atan2(end.y() - start.y(), end.x() - start.x())
+        size = 20
+        left = QPoint(
+            round(end.x() - size * math.cos(angle - math.pi / 6)),
+            round(end.y() - size * math.sin(angle - math.pi / 6)),
         )
-        arrow_p2 = QPoint(
-            int(p2.x() - arrow_size * math.cos(angle + math.pi / 6)),
-            int(p2.y() - arrow_size * math.sin(angle + math.pi / 6))
+        right = QPoint(
+            round(end.x() - size * math.cos(angle + math.pi / 6)),
+            round(end.y() - size * math.sin(angle + math.pi / 6)),
         )
-        
-        polygon = QPolygon([p2, arrow_p1, arrow_p2])
+        painter.setPen(Qt.NoPen)
         painter.setBrush(color)
-        painter.drawPolygon(polygon)
+        painter.drawPolygon(QPolygon([end, left, right]))

@@ -12,7 +12,7 @@ pyinstaller --onefile --noconsole main.py
 echo [3/4] Copying config, engine and templates to dist folder...
 copy /Y config.json dist\config.json
 if not exist dist\engine mkdir dist\engine
-copy /Y engine\* dist\engine\
+copy /Y engine\stockfish-windows-x86-64-avx2.exe dist\engine\
 if not exist dist\templates mkdir dist\templates
 xcopy /E /I /Y templates dist\templates
 

@@ -1,341 +1,127 @@
+from __future__ import annotations
+
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QGridLayout, QPushButton, QCheckBox, 
-    QSpinBox, QDoubleSpinBox, QFormLayout, QLabel, QTabWidget, QComboBox, 
-    QHBoxLayout, QRadioButton, QButtonGroup, QScrollArea, QFrame
+    QComboBox, QFormLayout, QHBoxLayout, QLabel, QPushButton,
+    QSpinBox, QVBoxLayout, QWidget,
 )
-from PyQt5.QtCore import Qt, QTimer
-import sys
+
+from core.config import save_config
+
 
 class ControlPanelUI(QWidget):
-    def __init__(self, worker, share_board=None, overlay=None):
+    resync_requested = pyqtSignal()
+    pause_changed = pyqtSignal(bool)
+    settings_changed = pyqtSignal(dict)
+    exit_requested = pyqtSignal()
+
+    def __init__(self, config: dict):
         super().__init__()
-        self.worker = worker
-        self.share_board = share_board
-        self.overlay = overlay
-        self.setWindowTitle("StockEye Control")
-        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint)
-        
-        # Thiết lập kích thước nhỏ gọn
-        self.resize(320, 250)
-        
-        # Đưa cửa sổ lên góc phải trên màn hình
-        try:
-            desktop_geom = QApplication.desktop().availableGeometry()
-            x = desktop_geom.width() - self.width() - 20
-            y = 20
-            self.move(x, y)
-        except:
-            pass
-            
-        self.config_path = "config.json"
-        self.config_data = self.worker.config_data
+        self.config = dict(config)
+        self.paused = False
+        self.setWindowTitle("StockEye Tracker")
+        self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint)
+        self.resize(340, 260)
 
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(10, 6, 10, 6)
-        main_layout.setSpacing(6)
-        
-        self.tabs = QTabWidget()
-        
-        # --- TAB CƠ BẢN ---
-        self.tab_basic = QWidget()
-        basic_layout = QFormLayout()
-        basic_layout.setContentsMargins(12, 8, 12, 4)
-        basic_layout.setSpacing(8)
-        
-        # 1. Bàn cờ phụ
-        self.chk_share_board = QCheckBox()
-        self.chk_share_board.setChecked(self.config_data.get("show_share_board", True))
-        if self.share_board:
-            self.share_board.setVisible(self.chk_share_board.isChecked())
-            if hasattr(self.share_board, "visibility_changed"):
-                self.share_board.visibility_changed.connect(
-                    lambda visible: self.chk_share_board.setChecked(visible) if self.chk_share_board.isChecked() != visible else None
-                )
-        def on_share_board_toggle(state):
-            is_checked = state == Qt.Checked
-            if self.share_board:
-                self.share_board.setVisible(is_checked)
-        self.chk_share_board.stateChanged.connect(on_share_board_toggle)
-        basic_layout.addRow("Bàn cờ phụ:", self.chk_share_board)
+        layout = QVBoxLayout(self)
+        self.status_label = QLabel("Đang khởi tạo...")
+        self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet("padding: 8px; background: #37474f; color: white;")
+        layout.addWidget(self.status_label)
 
-        # 2. Gợi ý (Bàn cờ chính)
-        self.chk_draw_main = QCheckBox()
-        self.chk_draw_main.setChecked(self.config_data.get("draw_on_main_board", False))
-        def on_draw_main_toggle(state):
-            is_checked = state == Qt.Checked
-            if self.overlay and hasattr(self.overlay, "set_draw_on_main_board"):
-                self.overlay.set_draw_on_main_board(is_checked)
-        self.chk_draw_main.stateChanged.connect(on_draw_main_toggle)
-        basic_layout.addRow("Gợi ý (Bàn cờ chính):", self.chk_draw_main)
+        form = QFormLayout()
+        self.orientation = QComboBox()
+        self.orientation.addItem("Trắng ở dưới", "white")
+        self.orientation.addItem("Đen ở dưới", "black")
+        self.orientation.setCurrentIndex(0 if config["board_orientation"] == "white" else 1)
+        form.addRow("Hướng bàn:", self.orientation)
 
-        # 3. Cưỡng ép phe hiện tại (Bên hiện tại)
-        side_layout = QHBoxLayout()
-        self.chk_force_side = QCheckBox("BÊN HIỆN TẠI:")
-        self.chk_force_side.setChecked(self.config_data.get("force_side_enabled", False))
-        
-        self.radio_white = QRadioButton("[5] TRẮNG")
-        self.radio_black = QRadioButton("[6] ĐEN")
-        
-        self.side_group = QButtonGroup()
-        self.side_group.addButton(self.radio_white)
-        self.side_group.addButton(self.radio_black)
-        
-        if self.config_data.get("force_side", "white") == "black":
-            self.radio_black.setChecked(True)
-        else:
-            self.radio_white.setChecked(True)
-            
-        def on_force_side_toggle():
-            is_enabled = self.chk_force_side.isChecked()
-            self.radio_white.setEnabled(is_enabled)
-            self.radio_black.setEnabled(is_enabled)
-            
-        self.chk_force_side.stateChanged.connect(on_force_side_toggle)
-        self.chk_force_side.stateChanged.connect(self.save_config)
-        self.radio_white.toggled.connect(self.save_config)
-        self.radio_black.toggled.connect(self.save_config)
-        
-        side_layout.addWidget(self.chk_force_side)
-        side_layout.addWidget(self.radio_white)
-        side_layout.addWidget(self.radio_black)
-        side_layout.addStretch()
-        
-        basic_layout.addRow(side_layout)
-        on_force_side_toggle()
+        self.selected_side = QComboBox()
+        self.selected_side.addItem("Lượt Trắng", "white")
+        self.selected_side.addItem("Lượt Đen", "black")
+        self.selected_side.setCurrentIndex(0 if config["selected_side"] == "white" else 1)
+        form.addRow("Lượt khi Resync:", self.selected_side)
 
-        # 4. Giới hạn sức mạnh (Mặc định: TẮT / Không giới hạn sức mạnh)
-        self.chk_limit_strength = QCheckBox()
-        self.chk_limit_strength.setChecked(self.config_data.get("uci_limit_strength", False))
-        self.chk_limit_strength.setToolTip("Mặc định TẮT (Không giới hạn sức mạnh - Bot đánh Max Elo). Bật lên để giới hạn Elo và độ trễ trong tab Nâng Cao.")
-        lbl_strength = QLabel("Giới hạn sức mạnh:")
-        lbl_strength.setToolTip(self.chk_limit_strength.toolTip())
-        basic_layout.addRow(lbl_strength, self.chk_limit_strength)
+        self.time_ms = QSpinBox()
+        self.time_ms.setRange(10, 50)
+        self.time_ms.setValue(config["engine_time_ms"])
+        self.time_ms.setSuffix(" ms")
+        form.addRow("Stockfish:", self.time_ms)
 
-        self.tab_basic.setLayout(basic_layout)
-        self.tabs.addTab(self.tab_basic, "Cơ Bản")
-        
-        # --- TAB NÂNG CAO ---
-        self.tab_adv = QWidget()
-        adv_layout = QFormLayout()
-        adv_layout.setContentsMargins(15, 15, 15, 15)
-        adv_layout.setSpacing(14)
-        
-        self.preset_is_updating = False
-        
-        # Chế độ chơi (Presets)
-        self.combo_preset = QComboBox()
-        self.combo_preset.addItems(["Cờ siêu chớp (1 Phút)", "Cờ chớp (3 Phút)", "Cờ nhanh (10 Phút)", "Tùy chỉnh"])
-        preset_idx = self.config_data.get("preset_index", 3)
-        self.combo_preset.setCurrentIndex(preset_idx)
-        self.combo_preset.currentIndexChanged.connect(self.apply_preset)
-        adv_layout.addRow("Chế độ chơi:", self.combo_preset)
-        
-        # Trình độ Bot (Elo)
-        self.spin_elo = QSpinBox()
-        self.spin_elo.setRange(1320, 4000)
-        self.spin_elo.setValue(self.config_data.get("uci_elo", 2000))
-        self.spin_elo.setToolTip("Điều chỉnh sức mạnh của Bot khi Bật giới hạn sức mạnh.")
-        lbl_elo = QLabel("Trình độ Bot (Elo):")
-        lbl_elo.setToolTip(self.spin_elo.toolTip())
-        adv_layout.addRow(lbl_elo, self.spin_elo)
-        
-        # Time Limit (s)
-        self.spin_time = QDoubleSpinBox()
-        self.spin_time.setRange(0.01, 10.0)
-        self.spin_time.setSingleStep(0.05)
-        self.spin_time.setValue(self.config_data.get("time_limit", 0.1))
-        adv_layout.addRow("Thời gian giới hạn (s):", self.spin_time)
-        
-        # Threads
-        self.spin_threads = QSpinBox()
-        self.spin_threads.setRange(1, 32)
-        self.spin_threads.setValue(self.config_data.get("threads", 2))
-        adv_layout.addRow("Số luồng CPU:", self.spin_threads)
-        
-        # Stable Frames
-        self.spin_stable = QSpinBox()
-        self.spin_stable.setRange(1, 10)
-        self.spin_stable.setValue(self.config_data.get("stable_frames", 4))
-        adv_layout.addRow("Khung hình chờ ổn định:", self.spin_stable)
-        
-        self.tab_adv.setLayout(adv_layout)
+        self.multipv = QSpinBox()
+        self.multipv.setRange(1, 4)
+        self.multipv.setValue(config["multipv"])
+        form.addRow("Số gợi ý:", self.multipv)
 
-        # Đặt tab Nâng Cao vào QScrollArea
-        scroll_adv = QScrollArea()
-        scroll_adv.setWidgetResizable(True)
-        scroll_adv.setFrameShape(QFrame.NoFrame)
-        scroll_adv.setWidget(self.tab_adv)
-        self.tabs.addTab(scroll_adv, "Nâng Cao")
-        self.tabs.currentChanged.connect(self.on_tab_changed)
-        
-        main_layout.addWidget(self.tabs)
-        
-        self.chk_limit_strength.stateChanged.connect(self.toggle_strength_inputs)
-        
-        # --- KHU VỰC NÚT BẤM ---
-        # Nút Lưu Settings
-        self.btn_save = QPushButton("LƯU SETTINGS")
-        self.btn_save.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 7px;")
-        self.btn_save.clicked.connect(self.save_config)
-        main_layout.addWidget(self.btn_save)
-        
-        # Grid cho các nút điều khiển
-        grid_layout = QGridLayout()
-        grid_layout.setSpacing(6)
-        grid_layout.setContentsMargins(0, 2, 0, 0)
-        
-        # [2] Nút Bật/Tắt Gợi Ý
-        self.btn_suggest = QPushButton()
-        self.update_suggest_btn_style(self.config_data.get("suggest_mode", False))
-        self.btn_suggest.clicked.connect(lambda: self.worker.toggle_suggest_mode())
-        self.worker.suggest_ui_signal.connect(self.update_suggest_btn_style, Qt.QueuedConnection)
-        grid_layout.addWidget(self.btn_suggest, 0, 0)
-        
-        # [F10] Nút Ẩn Tool (Stealth Mode / Boss Key)
-        self.btn_stealth = QPushButton()
-        self.update_stealth_btn_style(False)
-        self.btn_stealth.clicked.connect(lambda: self.worker.toggle_stealth_signal.emit())
-        grid_layout.addWidget(self.btn_stealth, 1, 0)
-        
-        main_layout.addLayout(grid_layout)
-        
-        self.setLayout(main_layout)
-        self.worker.exit_app_signal.connect(self.close, Qt.QueuedConnection)
-        self.worker.force_side_ui_signal.connect(self.on_force_side_hotkey, Qt.QueuedConnection)
-        
-        # Cập nhật UI ban đầu
-        self.toggle_strength_inputs()
-        
-        # Kết nối tất cả các sự kiện thay đổi để tự động lưu ngay lập tức
-        self.connect_signals_to_save()
-        
-        # Áp dụng preset nếu đang chọn (phải gọi sau khi tạo xong UI)
-        if self.combo_preset.currentIndex() != 3:
-            self.apply_preset(self.combo_preset.currentIndex())
+        self.suggest_for = QComboBox()
+        self.suggest_for.addItem("Chỉ bên tôi (quân ở dưới)", "mine")
+        self.suggest_for.addItem("Cả hai bên", "both")
+        self.suggest_for.addItem("Chỉ quân Trắng", "white")
+        self.suggest_for.addItem("Chỉ quân Đen", "black")
+        suggest_val = config.get("suggest_for", "mine")
+        self.suggest_for.setCurrentIndex(max(0, self.suggest_for.findData(suggest_val)))
+        form.addRow("Gợi ý cho:", self.suggest_for)
+        layout.addLayout(form)
 
-    def connect_signals_to_save(self):
-        # Checkboxes
-        self.chk_limit_strength.stateChanged.connect(self.save_config)
-        self.chk_share_board.stateChanged.connect(self.save_config)
-        self.chk_draw_main.stateChanged.connect(self.save_config)
-        # SpinBoxes
-        self.spin_elo.valueChanged.connect(self.save_config)
-        self.spin_time.valueChanged.connect(self.save_config)
-        self.spin_threads.valueChanged.connect(self.save_config)
-        self.spin_stable.valueChanged.connect(self.save_config)
-        
-        # Tự động nhảy sang "Tùy chỉnh" nếu người dùng tự kéo số
-        def on_custom_change():
-            if not self.preset_is_updating:
-                self.preset_is_updating = True
-                self.combo_preset.setCurrentIndex(3)
-                self.preset_is_updating = False
-        
-        self.spin_time.valueChanged.connect(on_custom_change)
+        buttons = QHBoxLayout()
+        self.resync_button = QPushButton("RESYNC")
+        self.resync_button.setStyleSheet("background:#2196f3;color:white;font-weight:bold;padding:9px;")
+        self.pause_button = QPushButton("TẠM DỪNG")
+        self.pause_button.setStyleSheet("padding:9px;")
+        buttons.addWidget(self.resync_button)
+        buttons.addWidget(self.pause_button)
+        layout.addLayout(buttons)
 
-    def apply_preset(self, index):
-        if self.preset_is_updating: return
-        self.preset_is_updating = True
-        
-        if index == 0: # Cờ siêu chớp (1 Phút)
-            self.spin_time.setValue(0.05)
-        elif index == 1: # Cờ chớp (3 Phút)
-            self.spin_time.setValue(0.1)
-        elif index == 2: # Cờ nhanh (10 Phút)
-            self.spin_time.setValue(0.25)
-            
-        self.preset_is_updating = False
-        if index != 3:
-            self.save_config()
+        self.resync_button.clicked.connect(self._resync)
+        self.pause_button.clicked.connect(self._toggle_pause)
+        self.orientation.currentIndexChanged.connect(self._save_and_emit)
+        self.selected_side.currentIndexChanged.connect(self._save_and_emit)
+        self.time_ms.valueChanged.connect(self._save_and_emit)
+        self.multipv.valueChanged.connect(self._save_and_emit)
+        self.suggest_for.currentIndexChanged.connect(self._save_and_emit)
 
-    def on_tab_changed(self, index):
-        if index == 0:
-            self.resize(320, 250)
-        else:
-            self.resize(340, 300)
+    def _current_settings(self) -> dict:
+        self.config["board_orientation"] = self.orientation.currentData()
+        self.config["selected_side"] = self.selected_side.currentData()
+        self.config["engine_time_ms"] = self.time_ms.value()
+        self.config["multipv"] = self.multipv.value()
+        self.config["suggest_for"] = self.suggest_for.currentData()
+        return self.config
 
-    def update_suggest_btn_style(self, is_on):
-        if is_on:
-            self.btn_suggest.setText("[2] GỢI Ý: ĐANG BẬT")
-            self.btn_suggest.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 7px;")
-        else:
-            self.btn_suggest.setText("[2] GỢI Ý: ĐANG TẮT")
-            self.btn_suggest.setStyleSheet("background-color: #f44336; color: white; font-weight: bold; padding: 7px;")
+    def _save_and_emit(self) -> None:
+        self.config = save_config(self._current_settings())
+        self.settings_changed.emit(dict(self.config))
 
-    def update_stealth_btn_style(self, is_stealth):
-        if is_stealth:
-            self.btn_stealth.setText("[F10] ĐANG ẨN (BẤM F10 ĐỂ HIỆN)")
-            self.btn_stealth.setStyleSheet("background-color: #D32F2F; color: white; font-weight: bold; padding: 6px;")
-        else:
-            self.btn_stealth.setText("[F10] ẨN TOOL (STEALTH MODE)")
-            self.btn_stealth.setStyleSheet("background-color: #37474F; color: white; font-weight: bold; padding: 6px;")
+    def _resync(self) -> None:
+        self._save_and_emit()
+        self.resync_requested.emit()
 
-    def toggle_strength_inputs(self):
-        is_checked = self.chk_limit_strength.isChecked()
-        self.spin_elo.setEnabled(is_checked)
-        self.spin_time.setEnabled(is_checked)
-
-    def save_config(self):
-        import json
-        self.config_data["uci_limit_strength"] = self.chk_limit_strength.isChecked()
-        self.config_data["uci_elo"] = self.spin_elo.value()
-        self.config_data["time_limit"] = round(self.spin_time.value(), 2)
-        self.config_data["threads"] = self.spin_threads.value()
-        self.config_data["stable_frames"] = self.spin_stable.value()
-        self.config_data["preset_index"] = self.combo_preset.currentIndex()
-        self.config_data["force_side_enabled"] = self.chk_force_side.isChecked()
-        self.config_data["force_side"] = "black" if self.radio_black.isChecked() else "white"
-        self.config_data["show_share_board"] = self.chk_share_board.isChecked()
-        self.config_data["draw_on_main_board"] = self.chk_draw_main.isChecked()
-        try:
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                json.dump(self.config_data, f, indent=4)
-            if hasattr(self.worker, 'engine') and self.worker.engine:
-                try:
-                    self.worker.engine.reload_config()
-                except Exception:
-                    pass
-            self.btn_save.setText("LƯU: ĐÃ LƯU")
-        except Exception as e:
-            print(f"Lỗi khi lưu config: {e}")
-            self.btn_save.setText("LƯU: CÓ LỖI XẢY RA")
-            
-        QTimer.singleShot(2000, lambda: self.btn_save.setText("LƯU SETTINGS"))
-
-    def closeEvent(self, event):
-        """Thoát chương trình khi đóng cửa sổ"""
-        if getattr(self, '_is_closing', False):
-            event.accept()
+    def apply_detected_side(self, side: str) -> None:
+        """Reflect the orientation detected by the resync worker without causing another resync."""
+        if side not in {"white", "black"}:
             return
-        self._is_closing = True
+        self.orientation.blockSignals(True)
+        self.selected_side.blockSignals(True)
+        try:
+            self.orientation.setCurrentIndex(self.orientation.findData(side))
+            self.selected_side.setCurrentIndex(self.selected_side.findData(side))
+        finally:
+            self.orientation.blockSignals(False)
+            self.selected_side.blockSignals(False)
+        self.config["board_orientation"] = side
+        self.config["selected_side"] = side
+        self.config = save_config(self.config)
 
-        print("\n[UI] Bảng điều khiển đã bị đóng. Đang thoát chương trình...")
-        if hasattr(self, 'worker') and self.worker:
-            self.worker.running = False
-            if hasattr(self.worker, 'engine') and self.worker.engine:
-                try:
-                    self.worker.engine.close()
-                except Exception:
-                    pass
-        if self.share_board:
-            try:
-                self.share_board.close()
-            except Exception:
-                pass
-        if hasattr(self, 'overlay') and self.overlay:
-            try:
-                self.overlay.close()
-            except Exception:
-                pass
-        QApplication.instance().quit()
+    def _toggle_pause(self) -> None:
+        self.paused = not self.paused
+        self.pause_button.setText("TIẾP TỤC" if self.paused else "TẠM DỪNG")
+        self.pause_changed.emit(self.paused)
+
+    def set_status(self, message: str, healthy: bool) -> None:
+        color = "#2e7d32" if healthy else "#b71c1c"
+        self.status_label.setText(message)
+        self.status_label.setStyleSheet(f"padding:8px;background:{color};color:white;")
+
+    def closeEvent(self, event) -> None:
+        self.exit_requested.emit()
         event.accept()
-
-    def on_force_side_hotkey(self, side):
-        self.chk_force_side.setChecked(True)
-        if side == "white":
-            self.radio_white.setChecked(True)
-        else:
-            self.radio_black.setChecked(True)
-        self.save_config()
-        # Buộc đồng bộ lại màu sau khi ép phe
-        self.worker.request_midgame_sync("auto_suggest")

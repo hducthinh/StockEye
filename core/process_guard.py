@@ -10,7 +10,7 @@ _registered_pids = set()
 def setup_windows_job_object():
     """
     Gán tiến trình hiện tại vào Windows Job Object với cờ JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
-    Bất kỳ tiến trình con nào (kể cả chrome.exe / Stockfish) khi cha bị tắt
+    Bất kỳ tiến trình Stockfish con nào khi cha bị tắt
     (bấm nút X, tắt terminal, bị kill từ Task Manager hoặc crash)
     sẽ được Kernel Windows tự động tiêu diệt 100%, không bao giờ bị chạy ngầm.
     """
@@ -73,41 +73,14 @@ def setup_windows_job_object():
             ctypes.sizeof(info)
         )
 
-        assign_ok = kernel32.AssignProcessToJobObject(hJob, kernel32.GetCurrentProcess())
+        assign_ok = set_ok and kernel32.AssignProcessToJobObject(hJob, kernel32.GetCurrentProcess())
         if assign_ok:
             _global_job_handle = hJob
             return hJob
+        kernel32.CloseHandle(hJob)
     except Exception as e:
         print(f"[ProcessGuard] Cảnh báo cấu hình Job Object: {e}")
     return None
-
-
-def cleanup_zombie_engines(engine_dir=None):
-    """
-    Quét và tiêu diệt các tiến trình chrome.exe hoặc stockfish cũ bị sót lại từ phiên trước.
-    LƯU Ý QUAN TRỌNG: Chỉ tiêu diệt tiến trình có đường dẫn xuất phát từ thư mục engine của StockEye,
-    tuyệt đối KHÔNG đụng đến trình duyệt Google Chrome thật của người dùng.
-    """
-    if engine_dir is None:
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        engine_dir = os.path.join(base_dir, "engine")
-    
-    engine_dir_clean = os.path.abspath(engine_dir).lower()
-    
-    try:
-        import psutil
-        for p in psutil.process_iter(['pid', 'name', 'exe']):
-            try:
-                exe = (p.info.get('exe') or '').lower()
-                # Chỉ xử lý nếu file thực thi nằm trong thư mục engine của project
-                if exe and engine_dir_clean in exe:
-                    print(f"[ProcessGuard] Phát hiện tiến trình engine cũ còn chạy ngầm: PID {p.pid} ({exe}). Đang dọn dẹp...")
-                    p.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-    except ImportError:
-        # Fallback nếu psutil chưa cài đặt
-        pass
 
 
 def kill_pid_force(pid):
@@ -149,8 +122,6 @@ atexit.register(_atexit_cleanup)
 
 
 def init_process_guard():
-    """Khởi tạo toàn diện cơ chế bảo vệ tiến trình"""
-    # 1. Dọn sạch tiến trình thừa cũ nếu có
-    cleanup_zombie_engines()
-    # 2. Cài đặt Windows Job Object để tự diệt khi tắt
-    setup_windows_job_object()
+    """Attach this process and its exact children to one kill-on-close job."""
+    if _global_job_handle is None:
+        setup_windows_job_object()

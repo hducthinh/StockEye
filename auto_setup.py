@@ -1,11 +1,12 @@
 import os
-import json
 import cv2
 import numpy as np
 import mss
 import time
 import sys
 import glob
+
+from core.config import load_config, save_config, templates_dir
 
 def find_board_auto(img_bgr):
     """
@@ -19,6 +20,23 @@ def find_board_auto(img_bgr):
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     
     candidates = []
+
+    def checker_score(x, y, w, h):
+        roi = gray[y:y + h, x:x + w]
+        means = np.zeros((8, 8), dtype=np.float32)
+        for row in range(8):
+            for col in range(8):
+                y1, y2 = round(row * h / 8), round((row + 1) * h / 8)
+                x1, x2 = round(col * w / 8), round((col + 1) * w / 8)
+                cell = roi[y1:y2, x1:x2]
+                margin_y, margin_x = max(1, cell.shape[0] // 5), max(1, cell.shape[1] // 5)
+                core = cell[margin_y:-margin_y, margin_x:-margin_x]
+                means[row, col] = float(np.mean(core))
+        even = means[(np.indices((8, 8)).sum(axis=0) % 2) == 0]
+        odd = means[(np.indices((8, 8)).sum(axis=0) % 2) == 1]
+        contrast = abs(float(np.median(even)) - float(np.median(odd)))
+        spread = float(np.std(even) + np.std(odd))
+        return contrast / max(8.0, spread)
     
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
@@ -31,8 +49,10 @@ def find_board_auto(img_bgr):
         
         # Bàn cờ chuẩn là hình vuông (sai số +/- 4%)
         if 0.96 <= aspect_ratio <= 1.04:
-            area = w * h
-            candidates.append((area, (x, y, w, h)))
+            score = checker_score(x, y, w, h)
+            if score >= 0.18:
+                area = w * h
+                candidates.append((score * area, (x, y, w, h)))
             
     if not candidates:
         return None
@@ -48,7 +68,7 @@ def get_board_bbox():
     """
     sct_class = getattr(mss, 'MSS', mss.mss)
     with sct_class() as sct:
-        monitor = sct.monitors[1] # Màn hình chính
+        monitor = sct.monitors[0]  # Toàn bộ virtual desktop, gồm cả màn hình phụ
         img = np.array(sct.grab(monitor))
         img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         
@@ -153,11 +173,12 @@ def extract_piece_templates(board_img, detected_color):
     """
     Trích xuất toàn bộ 32 quân cờ ở thế xuất phát và lưu vào thư mục templates/.
     """
-    if not os.path.exists("templates"):
-        os.makedirs("templates")
+    template_root = templates_dir()
+    if not template_root.exists():
+        template_root.mkdir(parents=True)
     else:
         # Xóa các template cũ để tránh lẫn lộn theme cờ
-        for old_tpl in glob.glob("templates/*.png"):
+        for old_tpl in glob.glob(str(template_root / "*.png")):
             try:
                 os.remove(old_tpl)
             except:
@@ -201,15 +222,16 @@ def extract_piece_templates(board_img, detected_color):
         y2 = int((row + 1) * sq_h)
         
         square_img = board_img[y1:y2, x1:x2]
-        
-        # Cắt bớt 15% viền mỗi bên để tập trung vào hình dạng quân cờ
-        pad_x = int((x2 - x1) * 0.15)
-        pad_y = int((y2 - y1) * 0.15)
-        cropped_img = square_img[pad_y:-pad_y, pad_x:-pad_x]
-        
-        filename = f"templates/{piece_name}_{row}_{col}.png"
-        cv2.imwrite(filename, cropped_img)
+        filename = template_root / f"{piece_name}_{row}_{col}.png"
+        cv2.imwrite(str(filename), square_img)
         count += 1
+
+    # Lưu hai mẫu ô trống để profile có thể kiểm tra theme về sau.
+    for label, row, col in (("empty_light", 2, 0), ("empty_dark", 2, 1)):
+        x1, y1 = int(col * sq_w), int(row * sq_h)
+        x2, y2 = int((col + 1) * sq_w), int((row + 1) * sq_h)
+        square = board_img[y1:y2, x1:x2]
+        cv2.imwrite(str(template_root / f"{label}.png"), square)
 
     print(f"[+] Đã trích xuất thành công {count} ảnh mẫu quân cờ vào thư mục 'templates/'!")
     return count
@@ -220,9 +242,9 @@ def main():
     print("      STOCKEYE - AUTO SETUP (TỰ ĐỘNG CÀI ĐẶT BÀN CỜ)")
     print("=" * 55)
     print("Vui lòng đảm bảo:")
-    print("  1. Trình duyệt đang mở bàn cờ (Chess.com, Lichess, ...).")
+    print("  1. Ứng dụng phân tích offline đang hiển thị bàn cờ đúng theme đã chọn.")
     print("  2. Bàn cờ đang ở vị trí XUẤT PHÁT (chưa có nước đi nào).")
-    print("  3. Toàn bộ bàn cờ hiển thị rõ ràng trên màn hình chính.")
+    print("  3. Toàn bộ bàn cờ hiển thị rõ ràng trên một trong các màn hình.")
     print("=" * 55)
     input("Nhấn ENTER để bắt đầu quét bàn cờ...")
     
@@ -241,41 +263,13 @@ def main():
     detected_color = detect_player_color(board_img)
     print(f"\n[+] Tự động nhận diện phe: {detected_color.upper()} (Độ sáng tối ưu)")
 
-    # Lưu vào config.json
-    config = {
-        "player_color": detected_color,
-        "threads": 1,
-        "uci_limit_strength": False,
-        "uci_elo": 3000,
-        "time_limit": 0.01,
+    config = load_config()
+    config.update({
         "bbox": bbox,
-        "suggest_mode": False,
-        "stable_frames": 1,
-        "preset_index": 3,
-        "force_side_enabled": True,
-        "force_side": detected_color,
-        "show_share_board": False,
-        "draw_on_main_board": True,
-        "engine_disguise_name": "chrome.exe"
-    }
-
-    # Nếu đã có config.json trước đó, cập nhật thay vì ghi đè mất các tùy chọn khác
-    if os.path.exists("config.json"):
-        try:
-            with open("config.json", "r", encoding="utf-8") as f:
-                existing = json.load(f)
-                existing.update(config)
-                # Đảm bảo không còn clock_region
-                existing.pop("clock_region", None)
-                existing.pop("your_clock_region", None)
-                existing.pop("opponent_clock_region", None)
-                existing.pop("board_region", None)
-                config = existing
-        except Exception as e:
-            print(f"[!] Chú ý khi đọc config cũ: {e}")
-
-    with open("config.json", "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=4)
+        "board_orientation": detected_color,
+        "selected_side": detected_color,
+    })
+    save_config(config)
     print("[+] Đã lưu cấu hình bàn cờ vào 'config.json'!")
 
     # Trích xuất templates
