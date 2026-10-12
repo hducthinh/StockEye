@@ -46,12 +46,24 @@ def test_template_recognizer_starting_board_recognition():
     assert rec.ready
 
     # Verify each piece template self-classifies correctly
-    for f in glob.glob("templates/*.png"):
-        if "empty" in f:
+    for f in rec.directory.glob("*.png"):
+        if "empty" in f.name:
             continue
-        img = cv2.imread(f)
+        img = cv2.imread(str(f))
         piece_type, score, amb = rec.classify_square(img)
         expected = Path(f).name.lower()[:2]
         assert piece_type == expected
         assert score >= 0.90
         assert amb is False
+
+
+def test_template_recognizer_preset_switch():
+    rec = TemplateRecognizer(preset="standard")
+    assert rec.preset == "standard"
+    assert rec.ready
+    assert "standard" in str(rec.directory).lower()
+
+    rec.set_preset("puzzle")
+    assert rec.preset == "puzzle"
+    assert rec.ready
+    assert "puzzle" in str(rec.directory).lower()

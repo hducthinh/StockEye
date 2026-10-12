@@ -10,6 +10,17 @@ SCHEMA_VERSION = 2
 DEFAULT_CONFIG = {
     "schema_version": SCHEMA_VERSION,
     "bbox": None,
+    "board_presets": {
+        "standard": {
+            "name": "Bàn cờ thông thường",
+            "bbox": None,
+        },
+        "puzzle": {
+            "name": "Puzzle Rush",
+            "bbox": None,
+        },
+    },
+    "active_preset": "standard",
     "board_orientation": "white",
     "selected_side": "white",
     "capture_fps": 60,
@@ -35,17 +46,49 @@ def config_path() -> Path:
     return app_dir() / "config.json"
 
 
-def templates_dir() -> Path:
+def templates_dir(preset: str = "standard") -> Path:
+    preset_key = str(preset or "standard").lower()
+    sub = app_dir() / "templates" / preset_key
+    if sub.exists() and any(sub.glob("*.png")):
+        return sub
     return app_dir() / "templates"
 
 
+def preset_templates_dir(preset: str = "standard") -> Path:
+    preset_key = str(preset or "standard").lower()
+    return app_dir() / "templates" / preset_key
+
+
 def engine_path() -> Path:
-    return app_dir() / "engine" / "stockfish-windows-x86-64-avx2.exe"
+    target = app_dir() / "engine" / "stockfish19.exe"
+    if target.exists():
+        return target
+    engine_dir = app_dir() / "engine"
+    if engine_dir.exists():
+        for exe in engine_dir.glob("*.exe"):
+            return exe
+    return target
 
 
 def _migrate(raw: dict) -> dict:
     cfg = deepcopy(DEFAULT_CONFIG)
-    cfg["bbox"] = raw.get("bbox")
+    raw_presets = raw.get("board_presets")
+    if isinstance(raw_presets, dict):
+        for k in ("standard", "puzzle"):
+            if k in raw_presets and isinstance(raw_presets[k], dict):
+                cfg["board_presets"][k]["bbox"] = raw_presets[k].get("bbox")
+                if "name" in raw_presets[k]:
+                    cfg["board_presets"][k]["name"] = str(raw_presets[k]["name"])
+
+    if cfg["board_presets"]["standard"]["bbox"] is None and raw.get("bbox"):
+        cfg["board_presets"]["standard"]["bbox"] = raw.get("bbox")
+
+    active = str(raw.get("active_preset", "standard")).lower()
+    if active not in cfg["board_presets"]:
+        active = "standard"
+    cfg["active_preset"] = active
+    cfg["bbox"] = cfg["board_presets"][active]["bbox"] or raw.get("bbox")
+
     legacy_side = str(raw.get("force_side", raw.get("player_color", "white"))).lower()
     if legacy_side not in {"white", "black"}:
         legacy_side = "white"
@@ -90,12 +133,68 @@ def validate_config(cfg: dict) -> dict:
             result[key] = "white"
     if result.get("suggest_for") not in {"mine", "both", "white", "black"}:
         result["suggest_for"] = "mine"
-    bbox = result.get("bbox")
     required = {"left", "top", "width", "height"}
-    if bbox is not None and (
-        not isinstance(bbox, dict) or not required.issubset(bbox)
-        or bbox["width"] <= 0 or bbox["height"] <= 0
+    presets = deepcopy(DEFAULT_CONFIG["board_presets"])
+    raw_presets = cfg.get("board_presets")
+    if isinstance(raw_presets, dict):
+        for k in ("standard", "puzzle"):
+            if k in raw_presets and isinstance(raw_presets[k], dict):
+                p_bbox = raw_presets[k].get("bbox")
+                if (
+                    p_bbox is not None
+                    and isinstance(p_bbox, dict)
+                    and required.issubset(p_bbox)
+                    and p_bbox["width"] > 0
+                    and p_bbox["height"] > 0
+                ):
+                    presets[k]["bbox"] = {
+                        "left": int(p_bbox["left"]),
+                        "top": int(p_bbox["top"]),
+                        "width": int(p_bbox["width"]),
+                        "height": int(p_bbox["height"]),
+                    }
+                if "name" in raw_presets[k]:
+                    presets[k]["name"] = str(raw_presets[k]["name"])
+
+    raw_bbox = cfg.get("bbox")
+    if (
+        presets["standard"]["bbox"] is None
+        and raw_bbox is not None
+        and isinstance(raw_bbox, dict)
+        and required.issubset(raw_bbox)
+        and raw_bbox["width"] > 0
+        and raw_bbox["height"] > 0
     ):
+        presets["standard"]["bbox"] = {
+            "left": int(raw_bbox["left"]),
+            "top": int(raw_bbox["top"]),
+            "width": int(raw_bbox["width"]),
+            "height": int(raw_bbox["height"]),
+        }
+
+    active = str(cfg.get("active_preset", "standard")).lower()
+    if active not in presets:
+        active = "standard"
+    result["board_presets"] = presets
+    result["active_preset"] = active
+
+    active_bbox = presets[active]["bbox"]
+    if active_bbox is not None:
+        result["bbox"] = active_bbox
+    elif (
+        raw_bbox is not None
+        and isinstance(raw_bbox, dict)
+        and required.issubset(raw_bbox)
+        and raw_bbox["width"] > 0
+        and raw_bbox["height"] > 0
+    ):
+        result["bbox"] = {
+            "left": int(raw_bbox["left"]),
+            "top": int(raw_bbox["top"]),
+            "width": int(raw_bbox["width"]),
+            "height": int(raw_bbox["height"]),
+        }
+    else:
         result["bbox"] = None
     return result
 

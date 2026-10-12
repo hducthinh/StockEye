@@ -33,6 +33,7 @@ from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from core.capture import BoardCapture
 from core.config import load_config, save_config
+from core.hotkey import GlobalHotkeyListener
 from core.process_guard import init_process_guard
 from core.worker import BoardTrackingWorker, CaptureWorker, EngineWorker
 from ui.control_panel import ControlPanelUI
@@ -51,6 +52,7 @@ class AppCoordinator(QObject):
         self.current_fen = None
         self.orientation = capture.orientation
         self.selected_side = tracker.state.selected_side
+        self.active_preset = tracker.config.get("active_preset", "standard")
 
     @pyqtSlot(int, str)
     def on_board_updated(self, revision: int, fen: str) -> None:
@@ -99,10 +101,22 @@ class AppCoordinator(QObject):
 
     @pyqtSlot(dict)
     def on_settings_changed(self, config: dict) -> None:
+        new_preset = config.get("active_preset", "standard")
+        preset_changed = new_preset != self.active_preset
+        if preset_changed:
+            self.active_preset = new_preset
+            self.tracker.update_preset(new_preset)
+
+        new_bbox = config.get("bbox")
+        bbox_changed = new_bbox is not None and new_bbox != self.capture.bbox
         geometry_changed = (
             config["board_orientation"] != self.orientation
             or config["selected_side"] != self.selected_side
+            or bbox_changed
+            or preset_changed
         )
+        if bbox_changed:
+            self.capture.set_geometry(new_bbox, config["board_orientation"])
         if geometry_changed:
             self.orientation = config["board_orientation"]
             self.selected_side = config["selected_side"]
@@ -170,15 +184,23 @@ def main() -> int:
     panel.pause_changed.connect(tracker.set_paused)
     panel.settings_changed.connect(coordinator.on_settings_changed)
     panel.exit_requested.connect(app.quit)
+    hotkey_worker = GlobalHotkeyListener()
+    hotkey_worker.preset_requested.connect(panel.switch_preset, Qt.QueuedConnection)
+    hotkey_worker.resync_requested.connect(panel.trigger_resync, Qt.QueuedConnection)
+    hotkey_worker.pause_toggled.connect(panel.toggle_pause, Qt.QueuedConnection)
+    hotkey_worker.toggle_visibility_requested.connect(panel.toggle_visibility, Qt.QueuedConnection)
 
     engine.start()
     tracker.start()
     capture_worker.start()
+    hotkey_worker.start()
     exit_code = app.exec_()
 
+    hotkey_worker.stop()
     capture_worker.stop()
     tracker.stop()
     engine.stop()
+    hotkey_worker.wait(1000)
     capture_worker.wait(1500)
     tracker.wait(1500)
     engine.wait(3000)

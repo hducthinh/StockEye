@@ -6,7 +6,7 @@ import time
 import sys
 import glob
 
-from core.config import load_config, save_config, templates_dir
+from core.config import load_config, save_config, templates_dir, preset_templates_dir
 
 def find_board_auto(img_bgr):
     """
@@ -169,11 +169,11 @@ def detect_player_color(board_img):
         return "black"
 
 
-def extract_piece_templates(board_img, detected_color):
+def extract_piece_templates(board_img, detected_color, preset: str = "standard"):
     """
-    Trích xuất toàn bộ 32 quân cờ ở thế xuất phát và lưu vào thư mục templates/.
+    Trích xuất toàn bộ 32 quân cờ ở thế xuất phát và lưu vào thư mục templates/<preset>/.
     """
-    template_root = templates_dir()
+    template_root = preset_templates_dir(preset)
     if not template_root.exists():
         template_root.mkdir(parents=True)
     else:
@@ -233,19 +233,105 @@ def extract_piece_templates(board_img, detected_color):
         square = board_img[y1:y2, x1:x2]
         cv2.imwrite(str(template_root / f"{label}.png"), square)
 
-    print(f"[+] Đã trích xuất thành công {count} ảnh mẫu quân cờ vào thư mục 'templates/'!")
+    print(f"[+] Đã trích xuất thành công {count} ảnh mẫu quân cờ vào thư mục '{template_root}'!")
     return count
 
 
 def main():
-    print("=" * 55)
-    print("      STOCKEYE - AUTO SETUP (TỰ ĐỘNG CÀI ĐẶT BÀN CỜ)")
-    print("=" * 55)
+    mode = "standard"
+    # Check CLI arguments (e.g. py .\auto_setup.py --mode puzzle / 6)
+    for arg in sys.argv[1:]:
+        arg_lower = arg.lower().strip()
+        if arg_lower in {"--puzzle", "-p", "puzzle", "2", "6", "--mode=puzzle"}:
+            mode = "puzzle"
+        elif arg_lower in {"--standard", "-s", "standard", "1", "5", "--mode=standard"}:
+            mode = "standard"
+
+    print("=" * 58)
+    print("      STOCKEYE - AUTO SETUP (CÀI ĐẶT TỌA ĐỘ BÀN CỜ)")
+    print("=" * 58)
+
+    if len(sys.argv) <= 1:
+        print("Chọn chế độ bàn cờ bạn muốn quét và lưu tọa độ:")
+        print("  [5] Bàn cờ thông thường (Standard Game)  [hoặc bấm 1]")
+        print("  [6] Bàn cờ Puzzle Rush (Tactics)         [hoặc bấm 2]")
+        choice = input("\nNhập lựa chọn [5 hoặc 6] (mặc định: 5): ").strip()
+        if choice in {"6", "2", "puzzle", "p"}:
+            mode = "puzzle"
+        else:
+            mode = "standard"
+
+    if mode == "puzzle":
+        print("\n" + "-" * 58)
+        print("               CHẾ ĐỘ: PUZZLE RUSH")
+        print("-" * 58)
+        print("Vui lòng đảm bảo:")
+        print("  1. Trình duyệt đang mở màn hình Puzzle Rush (bàn cờ hiện rõ ràng).")
+        print("  2. Không cần ở thế xuất phát (dùng bộ mẫu quân cờ đã có).")
+        print("-" * 58)
+        input("Nhấn ENTER để bắt đầu quét bàn cờ Puzzle Rush...")
+
+        print("\n[*] Bạn có 3 giây để chuyển sang cửa sổ Puzzle Rush...")
+        for i in range(3, 0, -1):
+            print(f"    Quét sau: {i}...")
+            time.sleep(1)
+
+        bbox, board_img = get_board_bbox()
+        if bbox is None or board_img is None:
+            print("\n[X] Quá trình cài đặt bị gián đoạn.")
+            input("\nNhấn Enter để thoát...")
+            return
+
+        config = load_config()
+        presets = config.get("board_presets", {})
+        if "puzzle" not in presets:
+            presets["puzzle"] = {"name": "Puzzle Rush", "bbox": None}
+        presets["puzzle"]["bbox"] = bbox
+        config["board_presets"] = presets
+        config["active_preset"] = "puzzle"
+        config["bbox"] = bbox
+        save_config(config)
+
+        # Đảm bảo có bộ template trong templates/puzzle/
+        tpl_dir = preset_templates_dir("puzzle")
+        existing_templates = list(tpl_dir.glob("*.png")) if tpl_dir.exists() else []
+        has_existing = len(existing_templates) >= 32
+        if not has_existing:
+            std_dir = preset_templates_dir("standard")
+            std_templates = list(std_dir.glob("*.png")) if std_dir.exists() else []
+            if len(std_templates) >= 32:
+                import shutil
+                tpl_dir.mkdir(parents=True, exist_ok=True)
+                for f in std_templates:
+                    shutil.copy2(f, tpl_dir / f.name)
+                print(f"[+] Đã sao chép {len(std_templates)} mẫu quân cờ từ 'standard' sang 'puzzle'.")
+
+        print("\n[*] Bạn có muốn trích xuất lại ảnh mẫu quân cờ RIÊNG cho Puzzle Rush không?")
+        print("    (Chỉ chọn Y nếu bàn cờ Puzzle Rush đang ở thế XUẤT PHÁT 32 quân cờ)")
+        ans = input("    Trích xuất mẫu quân cờ cho Puzzle Rush? [y/N]: ").strip().lower()
+        if ans in {"y", "yes", "c", "co", "có"}:
+            extract_piece_templates(board_img, detect_player_color(board_img), preset="puzzle")
+
+        print(f"\n[+] ĐÃ LƯU TỌA ĐỘ CHO 'Puzzle Rush' THÀNH CÔNG!")
+        print(f"    Tọa độ: left={bbox['left']}, top={bbox['top']}, w={bbox['width']}, h={bbox['height']}")
+        print("\n" + "=" * 58)
+        print("            CÀI ĐẶT PUZZLE RUSH HOÀN TẤT!")
+        print("=" * 58)
+        print("Bạn có thể chuyển đổi linh hoạt giữa 'Bàn cờ thông thường' và")
+        print("'Puzzle Rush' trực tiếp trên bảng điều khiển (Control Panel) của StockEye!")
+        print("=" * 58)
+        input("\nNhấn Enter để hoàn tất...")
+        return
+
+    # Standard mode
+    print("\n" + "-" * 58)
+    print("             CHẾ ĐỘ: BÀN CỜ THÔNG THƯỜNG")
+    print("-" * 58)
     print("Vui lòng đảm bảo:")
     print("  1. Ứng dụng phân tích offline đang hiển thị bàn cờ đúng theme đã chọn.")
     print("  2. Bàn cờ đang ở vị trí XUẤT PHÁT (chưa có nước đi nào).")
     print("  3. Toàn bộ bàn cờ hiển thị rõ ràng trên một trong các màn hình.")
-    print("=" * 55)
+    print("-" * 58)
     input("Nhấn ENTER để bắt đầu quét bàn cờ...")
     
     print("\n[*] Bạn có 3 giây để chuyển sang cửa sổ trình duyệt...")
@@ -264,24 +350,43 @@ def main():
     print(f"\n[+] Tự động nhận diện phe: {detected_color.upper()} (Độ sáng tối ưu)")
 
     config = load_config()
-    config.update({
-        "bbox": bbox,
-        "board_orientation": detected_color,
-        "selected_side": detected_color,
-    })
+    presets = config.get("board_presets", {})
+    if "standard" not in presets:
+        presets["standard"] = {"name": "Bàn cờ thông thường", "bbox": None}
+    presets["standard"]["bbox"] = bbox
+    config["board_presets"] = presets
+    config["active_preset"] = "standard"
+    config["bbox"] = bbox
+    config["board_orientation"] = detected_color
+    config["selected_side"] = detected_color
     save_config(config)
-    print("[+] Đã lưu cấu hình bàn cờ vào 'config.json'!")
+    print("[+] Đã lưu cấu hình Bàn cờ thông thường vào 'config.json'!")
 
-    # Trích xuất templates
-    print("\n[*] Đang trích xuất ảnh mẫu 32 quân cờ...")
-    extract_piece_templates(board_img, detected_color)
+    # Kiểm tra xem đã có bộ templates hợp lệ chưa
+    tpl_dir = preset_templates_dir("standard")
+    existing_templates = list(tpl_dir.glob("*.png")) if tpl_dir.exists() else []
+    has_existing = len(existing_templates) >= 32
 
-    print("\n" + "=" * 55)
+    extract_needed = True
+    if has_existing:
+        print("\n[*] Bạn ĐÃ CÓ sẵn bộ ảnh mẫu 32 quân cờ trong thư mục 'templates/standard/'.")
+        print("    - Nhấn [ENTER] (hoặc gõ N): Giữ nguyên mẫu cũ (CHỈ cập nhật lại tọa độ bàn cờ).")
+        print("    - Gõ [Y]: Trích xuất lại mẫu mới (CHỈ chọn khi bàn cờ ở thế XUẤT PHÁT và bạn đổi theme mới).")
+        ans = input("Bạn có muốn trích xuất lại ảnh mẫu quân cờ không? [y/N]: ").strip().lower()
+        if ans not in {"y", "yes", "c", "co", "có"}:
+            extract_needed = False
+            print("[+] Đã giữ nguyên bộ mẫu quân cờ hiện tại, an toàn không bị ghi đè!")
+
+    if extract_needed:
+        print("\n[*] Đang trích xuất ảnh mẫu 32 quân cờ từ thế xuất phát vào 'templates/standard/'...")
+        extract_piece_templates(board_img, detected_color, preset="standard")
+
+    print("\n" + "=" * 58)
     print("            CÀI ĐẶT HOÀN TẤT THÀNH CÔNG!")
-    print("=" * 55)
+    print("=" * 58)
     print("Bây giờ bạn có thể khởi động StockEye bằng lệnh:")
     print("    python main.py")
-    print("=" * 55)
+    print("=" * 58)
     input("\nNhấn Enter để hoàn tất...")
 
 if __name__ == "__main__":

@@ -87,6 +87,7 @@ class BoardTrackingWorker(QThread):
         self.recognizer = TemplateRecognizer(
             threshold=float(config["recognition_threshold"]),
             ambiguity_margin=float(config["recognition_margin"]),
+            preset=config.get("active_preset", "standard"),
         )
         self.state = BoardState(config["selected_side"])
         self.resolver = LegalMoveResolver()
@@ -116,6 +117,12 @@ class BoardTrackingWorker(QThread):
         else:
             self._resync_requested.set()
             self.status_changed.emit("Tiếp tục — đang đồng bộ lại", False)
+
+    def update_preset(self, preset: str) -> None:
+        with self._state_lock:
+            self.recognizer.set_preset(preset)
+            self._reference_image = None
+            self._resync_requested.set()
 
     def update_side_and_orientation(self, selected_side: str, orientation: str) -> None:
         with self._state_lock:

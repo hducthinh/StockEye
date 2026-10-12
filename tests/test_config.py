@@ -27,3 +27,22 @@ def test_save_is_validated_and_round_trips(tmp_path):
     assert saved["engine_time_ms"] == 10
     assert saved["multipv"] == 4
     assert load_config(path) == saved
+
+
+def test_board_presets_migrated_and_validated(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({
+        "bbox": {"left": 100, "top": 200, "width": 500, "height": 500},
+    }), encoding="utf-8")
+    cfg = load_config(path)
+    assert cfg["active_preset"] == "standard"
+    assert cfg["board_presets"]["standard"]["bbox"] == {"left": 100, "top": 200, "width": 500, "height": 500}
+    assert cfg["board_presets"]["puzzle"]["bbox"] is None
+    assert cfg["bbox"] == {"left": 100, "top": 200, "width": 500, "height": 500}
+
+    # Save with puzzle preset active
+    cfg["board_presets"]["puzzle"]["bbox"] = {"left": 400, "top": 150, "width": 450, "height": 450}
+    cfg["active_preset"] = "puzzle"
+    saved = save_config(cfg, path)
+    assert saved["active_preset"] == "puzzle"
+    assert saved["bbox"] == {"left": 400, "top": 150, "width": 450, "height": 450}

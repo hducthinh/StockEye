@@ -29,7 +29,7 @@ python -m pip install -r requirements.txt
 Đặt Stockfish tại:
 
 ```text
-engine/stockfish-windows-x86-64-avx2.exe
+engine/stockfish19.exe
 ```
 
 ## Hiệu chuẩn
@@ -50,6 +50,13 @@ python main.py
 
 Control panel có các chức năng:
 
+- **Phím tắt nhanh (Toàn hệ thống / Global Hotkey):**
+  - **Phím 3:** Kích hoạt **Resync** lại toàn bộ bàn cờ.
+  - **Phím 4:** **Tạm dừng / Tiếp tục** quá trình tracking.
+  - **Phím 5:** Chuyển ngay sang **Bàn cờ thông thường** (standard) và kích hoạt Resync.
+  - **Phím 6:** Chuyển ngay sang **Puzzle Rush** (puzzle) và kích hoạt Resync.
+  - **Phím 7:** **Ẩn/Hiện toàn bộ giao diện tool** (Control Panel và cửa sổ tiến trình) nhưng **vẫn giữ nguyên gợi ý nước đi** trên bàn cờ.
+  *(Hoạt động trực tiếp ngay cả khi đang tập trung chơi trên trình duyệt)*
 - **Resync:** tự nhận diện màu quân đang ở phía dưới, chọn hướng bàn và lượt tương ứng, rồi nhận diện lại toàn bộ bàn cờ.
 - **Tạm dừng/Tiếp tục:** dừng hoặc bật tracking.
 - Chọn hướng bàn và lượt dùng khi Resync không thể nối với lịch sử cũ.

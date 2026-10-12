@@ -127,17 +127,27 @@ class TemplateRecognizer:
         threshold: float = 0.62,
         ambiguity_margin: float = 0.01,
         canonical_size: int = 64,
+        preset: str = "standard",
     ):
-        self.directory = Path(directory or templates_dir())
+        self.preset = preset
+        self.directory = Path(directory or templates_dir(preset))
         self.threshold = threshold
         self.ambiguity_margin = ambiguity_margin
         self.canonical_size = canonical_size
         self.templates: dict[str, list[tuple[np.ndarray, np.ndarray]]] = {}
         self.reload()
 
+    def set_preset(self, preset: str) -> None:
+        self.preset = preset
+        self.directory = Path(templates_dir(preset))
+        self.reload()
+
     def reload(self) -> None:
         self.templates.clear()
-        for path_str in glob.glob(str(self.directory / "*.png")):
+        target_dir = self.directory
+        if not any(target_dir.glob("*.png")):
+            target_dir = templates_dir("standard")
+        for path_str in glob.glob(str(target_dir / "*.png")):
             piece_type = Path(path_str).name.lower()[:2]
             if piece_type not in PIECE_TO_FEN:
                 continue
